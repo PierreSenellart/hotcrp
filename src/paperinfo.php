@@ -482,6 +482,16 @@ class PaperInfoSet implements IteratorAggregate, Countable {
             $this->by_pid[$prow->paperId] = $prow;
         }
     }
+    function sort_by_search(PaperSearch $srch) {
+        if ($srch->nontrivial_sort()) {
+            $pidmap = array_flip($srch->sorted_paper_ids());
+            $this->sort_by(function ($a, $b) use ($pidmap) {
+                $ai = $pidmap[$a->paperId] ?? PHP_INT_MAX;
+                $bi = $pidmap[$b->paperId] ?? PHP_INT_MAX;
+                return $ai <=> $bi;
+            });
+        }
+    }
     /** @return list<int> */
     function paper_ids() {
         return array_keys($this->by_pid);
@@ -730,7 +740,7 @@ class PaperInfo {
     private $_desirability;
     /** @var ?list<int> */
     private $_topic_array;
-    /** @var ?array<int,float> */
+    /** @var ?array<int,int> */
     private $_topic_interest_score_array;
     /** @var ?array<int,list<int>> */
     private $_option_values;
@@ -1009,8 +1019,9 @@ class PaperInfo {
     /** @param int $cid
      * @return PaperContactInfo */
     function _get_contact_info($cid) {
-        if (($ci = $this->_contact_info[$cid]) === null) {
-            $ci = $this->_contact_info[$cid] = new PaperContactInfo($this->paperId, $cid);
+        $ci =& $this->_contact_info[$cid];
+        if ($ci === null) {
+            $ci = new PaperContactInfo($this->paperId, $cid);
         }
         return $ci;
     }
@@ -2149,13 +2160,10 @@ class PaperInfo {
                 }
             }
         }
-        if ($score) {
-            // * Strong interest in the paper's single topic gets
-            //   score 10.
-            $score = (int) ($score / sqrt(count($topics)) * 10 + 0.5);
-        }
-        $this->_topic_interest_score_array[$contact->contactId] = $score;
-        return $score;
+        // Scale so strong interest in the paper's single topic gets score 10
+        $iscore = $score ? (int) ($score / sqrt(count($topics)) * 10 + 0.5) : 0;
+        $this->_topic_interest_score_array[$contact->contactId] = $iscore;
+        return $iscore;
     }
 
     function invalidate_topics() {
@@ -2801,12 +2809,16 @@ class PaperInfo {
 
     /** @return int|false */
     function parse_ordinal_id($oid) {
-        if ($oid === "") {
+        if (is_int($oid)) {
+            return $oid;
+        } else if ($oid === "") {
             return 0;
         } else if (ctype_digit($oid)) {
             return intval($oid);
-        } else if (str_starts_with($oid, (string) $this->paperId)) {
-            $oid = (string) substr($oid, strlen((string) $this->paperId));
+        }
+        $pidstr = (string) $this->paperId;
+        if (str_starts_with($oid, $pidstr)) {
+            $oid = (string) substr($oid, strlen($pidstr));
             if (strlen($oid) > 1 && $oid[0] === "r" && ctype_digit(substr($oid, 1))) {
                 return intval(substr($oid, 1));
             }
@@ -2815,9 +2827,8 @@ class PaperInfo {
             return -$n;
         } else if ($oid === "rnew" || $oid === "new") {
             return 0;
-        } else {
-            return false;
         }
+        return false;
     }
 
     /** @return array<int,ReviewInfo> */
@@ -2925,9 +2936,8 @@ class PaperInfo {
     function checked_review_by_user($u) {
         if (($rrow = $this->review_by_user($u))) {
             return $rrow;
-        } else {
-            throw new Exception("PaperInfo::checked_review_by_user failure");
         }
+        throw new Exception("PaperInfo::checked_review_by_user failure");
     }
 
     /** @param int|Contact $contact

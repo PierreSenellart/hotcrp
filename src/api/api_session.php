@@ -154,13 +154,28 @@ class Session_API {
     }
 
     static function whoami(Contact $user, Qrequest $qreq) {
-        return [
+        $j = [
             "ok" => true,
             "email" => $user->email,
             "given_name" => $user->firstName,
             "family_name" => $user->lastName,
             "affiliation" => $user->affiliation
         ];
+        $roles = UserStatus::unparse_roles_json($user->roles) ?? [];
+        if (!$user->privChair
+            && ($user->is_manager() || $user->is_track_manager())) {
+            $roles[] = "manager";
+        }
+        if ($user->is_author()) {
+            $roles[] = "author";
+        }
+        if ($user->has_review()) {
+            $roles[] = "reviewer";
+        }
+        if (!empty($roles)) {
+            $j["roles"] = $roles;
+        }
+        return $j;
     }
 
     static function stashmessages(Contact $user, Qrequest $qreq) {
@@ -200,14 +215,14 @@ class Session_API {
             }
         }
         if (empty($ml)) {
-            return JsonResult::make_ok()->set("smsg", false)->set("_smsg" /* XXX */, false);
+            return JsonResult::make_ok()->set("smsg", false);
         }
         $smsg = $qreq->smsg ?? base48_encode(random_bytes(6));
         $qreq->open_session();
         $smsgs = $qreq->gsession("smsg") ?? [];
         $smsgs[] = [$smsg, Conf::$now, Ht::feedback_msg_content($ml)];
         $qreq->set_gsession("smsg", $smsgs);
-        return (new JsonResult(200))->set("smsg", $smsg)->set("_smsg" /* XXX */, $smsg);
+        return (new JsonResult(200))->set("smsg", $smsg);
     }
 
     static function reauth(Contact $user, Qrequest $qreq) {

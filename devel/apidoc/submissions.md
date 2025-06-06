@@ -5,17 +5,17 @@ These endpoints query and modify HotCRP submissions.
 
 # get /paper
 
-> Retrieve submission
+> Fetch submission
 
-Return a submission object specified by `p`, a submission ID.
+Fetch a submission object specified by `p`, a submission ID.
 
-All visible information about submission fields, tags, and overall status are
-returned in the `paper` response property, which defines a submission object.
-Error messages—for instance, about permission errors or nonexistent
-submissions—are returned in `message_list`.
+All visible submission fields, tags, and status information is returned in a
+submission object. The `paper` response property holds this object. Error
+messages—for instance, about permission errors or nonexistent submissions—are
+returned in `message_list`.
 
-Submission objects are formatted based on the submission form. They have an
-`object` property set to `"paper"`, a `pid`, and a `status`. Other properties
+Submission objects always have an `object` property (set to the constant
+string `"paper"`), a `pid` property, and a `status` property. Other properties
 are provided based on which submission fields exist and whether the accessing
 user can see them.
 
@@ -52,7 +52,7 @@ remain unchanged.
 
 The `p` request parameter is optional. If it is unset, HotCRP uses the `pid`
 from the supplied JSON. If both the `p` parameter and the JSON `pid` property
-are present, however, then they must match.
+are present, then they must match.
 
 To test a modification, supply a `dry_run=1` parameter. This will test the
 uploaded JSON but make no changes to the database.
@@ -87,17 +87,17 @@ $ curl -H "Authorization: bearer hct_XXX" -F "json=<data.json" -F paper.pdf=@pap
 
 ### Responses
 
-If the modification succeeds, the response’s `paper` property contains the
-modified submission object.
+The `valid` response property is `true` if and only if the modification was
+valid. In non-dry-run requests, `"valid": true` indicates that database changes
+were committed.
 
-The `change_list` property is a list of names of the modified fields. New
+The `change_list` response property lists any modified field names. New
 submissions have `"pid"` as the first item in the list. `change_list` contains
 fields that the request *attempted* to modify; successful requests, erroneous
 requests, and dry-run requests can all return nonempty `change_list`s.
 
-The `valid` property is `true` if and only if the modification was valid. In
-non-dry-run requests, `valid: true` indicates that database changes were
-committed.
+The response returns the modified submission object `paper` property contains
+the modified submission object.
 
 Dry-run requests return `change_list` and `valid` properties, but not `paper`
 properties, since no modifications are performed.
@@ -108,10 +108,11 @@ properties, since no modifications are performed.
 Administrators can use this endpoint to set some submission properties, such
 as `decision`, that have other endpoints as well.
 
-Administrators can choose specific IDs for new submissions; just set `p` (or
+Administrators can choose specific IDs for new submissions by setting `p` (or
 JSON `pid`) to the chosen ID. Such a request will either modify an existing
 submission or create a new submission with that ID. To avoid overwriting an
-existing submission, set the JSON’s `status`.`if_unmodified_since` to `0`.
+existing submission, set the submission JSON’s `status`.`if_unmodified_since`
+to `0`.
 
 * param dry_run boolean: True checks input for errors, but does not save changes
 * param disable_users boolean: True disables any newly-created users (site
@@ -152,13 +153,13 @@ Delete the submission specified by `p`, a submission ID.
 
 # get /papers
 
-> Retrieve multiple submissions
+> Fetch multiple submissions
 
-Retrieve submission objects matching a search.
+Fetch submission objects matching a search.
 
-The search is specified in the `q` parameter; all matching visible papers are
-returned. Other search parameters (`t`, `qt`) are accepted too. The response
-property `papers` is an array of matching submission objects.
+The search is specified in the `q` parameter (and other search parameters,
+such as `t` and `qt`). All matching visible submissions are returned, as an
+array of submission objects, in the response property `papers`.
 
 Since searches silently filter out non-viewable submissions, `/papers?q=1010`
 and `/paper?p=1010` can return different error messages. The `/paper` request
@@ -182,10 +183,12 @@ request formats are similar to that of `POST /{p}/paper`: it can accept a
 JSON, ZIP, or form-encoded request body with a `json` parameter, and ZIP and
 form-encoded requests can also include attached files.
 
-The JSON provided for `/papers` should be an *array* of JSON objects. Response
-properties `papers`, `change_lists`, and `valid` are arrays with the same
-number of elements as the input JSON; component *i* of each response property
-contains the result for the *i*th submission object in the input JSON.
+The JSON provided for `/papers` should be an *array* of JSON objects. The
+`status_list` response property is an array with the same number of elements
+as the input JSON. Component *i* of `status_list` reports the status of update
+*i* as an object with `valid`, `change_list`, and `pid` properties; these
+report the validity of the update, the list of changed fields, and the
+submission ID of the modified submission.
 
 Alternately, you can provide a `q` search query parameter and a *single* JSON
 object. The JSON object must not have a `pid` property. The JSON modification
@@ -207,6 +210,5 @@ relevant submission in the input JSON.
 * param ?t search_collection: Collection to search; defaults to `viewable`
 * response ?dry_run boolean: True for `dry_run` requests
 * response ?papers [paper]: List of JSON versions of modified papers
-* response ?+change_lists [[string]]: List of lists of changed fields
-* response ?+valid [boolean]: List of validity checks
+* response ?+status_list [update_status]: List of lists of changed fields
 * badge admin

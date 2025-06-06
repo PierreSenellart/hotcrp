@@ -1,6 +1,6 @@
 <?php
 // siteloader.php -- HotCRP autoloader
-// Copyright (c) 2006-2024 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 class SiteLoader {
     static $map = [
@@ -27,6 +27,7 @@ class SiteLoader {
         "MessageItem" => "lib/messageset.php",
         "Numeric_ValueFormat" => "src/valueformat.php",
         "PaperInfoSet" => "src/paperinfo.php",
+        "PaperReviewPreference" => "src/paperinfo.php",
         "Present_ReviewFieldSearch" => "src/reviewfieldsearch.php",
         "QrequestFile" => "lib/qrequest.php",
         "ReviewFieldInfo" => "src/reviewfield.php",
@@ -91,9 +92,8 @@ class SiteLoader {
     static function find($suffix) {
         if ($suffix[0] === "/") {
             return self::$root . $suffix;
-        } else {
-            return self::$root . "/" . $suffix;
         }
+        return self::$root . "/" . $suffix;
     }
 
     // Set up conference options
@@ -164,7 +164,7 @@ class SiteLoader {
         global $Opt;
 
         $root = $root ?? self::$root;
-        $autoload = $expansions["autoload"] ?? 0;
+        $autoload = $expansions["autoload"] ?? false;
         $includepath = null;
 
         $results = [];
@@ -278,9 +278,10 @@ class SiteLoader {
         }
     }
 
-    /** @param string $class_name */
-    static function autoload($class_name) {
-        $f = self::$map[$class_name] ?? strtolower($class_name) . ".php";
+    /** @param string $class */
+    static function autoload($class) {
+        $x = str_starts_with($class, "HotCRP\\") ? substr($class, 7) : $class;
+        $f = self::$map[$x] ?? strtolower($x) . ".php";
         foreach (self::expand_includes(self::$root, $f, ["autoload" => true]) as $fx) {
             require_once($fx);
         }

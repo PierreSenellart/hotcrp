@@ -1,11 +1,23 @@
 <?php
 // api_settings.php -- HotCRP settings API
-// Copyright (c) 2008-2022 Eddie Kohler; see LICENSE.
+// Copyright (c) 2008-2025 Eddie Kohler; see LICENSE.
 
 class Settings_API {
+    /** @param ?string $s
+     * @return ?SearchExpr */
+    static private function parse_filter($s) {
+        if ($s === null || trim($s) === "") {
+            return null;
+        }
+        $sp = new SearchParser($s);
+        return $sp->parse_expression(SearchOperatorSet::simple_operators());
+    }
+
     static function run(Contact $user, Qrequest $qreq) {
         $content = ["ok" => true];
         $reset = !!friendly_boolean($qreq->reset);
+        $filter = self::parse_filter($qreq->filter);
+        $exclude = self::parse_filter($qreq->exclude);
         if ($qreq->valid_post()) {
             if ($qreq->body_content_type() === Mimetype::JSON_TYPE) {
                 $jtext = $qreq->body();
@@ -18,6 +30,7 @@ class Settings_API {
             if (!$sv->viewable_by_user()) {
                 return JsonResult::make_permission_error();
             }
+            $sv->set_si_filter($filter)->set_si_exclude($exclude);
             $sv->add_json_string($jtext, $qreq->filename);
             $sv->set_req("reset", $reset ? "1" : "");
             $sv->parse();
@@ -29,8 +42,16 @@ class Settings_API {
             }
             $content["ok"] = !$sv->has_error();
             $content["message_list"] = $sv->message_list();
-            $content["change_list"] = $sv->changed_keys();
-            if ($dry_run || $sv->has_error()) {
+            $cl = [];
+            foreach ($sv->changed_top_si() as $si) {
+                $cl[] = $si->name;
+            }
+            $content["change_list"] = $cl;
+            if ($sv->has_error()) {
+                return new JsonResult($content);
+            } else if ($dry_run) {
+                $sv->set_si_filter(null)->set_si_exclude(null);
+                $content["settings"] = $sv->all_jsonv(["new" => true]);
                 return new JsonResult($content);
             }
         }
@@ -38,6 +59,7 @@ class Settings_API {
         if (!$sv->viewable_by_user()) {
             return JsonResult::make_permission_error();
         }
+        $sv->set_si_filter($filter)->set_si_exclude($exclude);
         $content["settings"] = $sv->all_jsonv(["reset" => $reset]);
         return new JsonResult($content);
     }
@@ -150,9 +172,8 @@ class Settings_API {
 
         $l = [];
         foreach ($m as $name => $list) {
-            if (($j = $xtp->search_list($list))) {
+            if (($j = $xtp->search_list($list)))
                 $l[] = $j;
-            }
         }
 
         usort($l, "Conf::xt_pure_order_compare");

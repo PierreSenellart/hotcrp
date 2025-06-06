@@ -59,6 +59,10 @@
         "response_deprecated": "cmt"
     },
     {
+        "name": "cspreport", "post": true, "check_token": false,
+        "function": "Error_API::cspreport"
+    },
+    {
         "name": "declinereview", "post": true,
         "function": "RequestReview_API::declinereview",
         "parameters": "p r ?=reason",
@@ -179,13 +183,13 @@
     },
     {
         "name": "oauthtoken", "post": true, "allow_disabled": true, "check_token": false,
-        "function": "Authorize_Page::oauthtoken_api"
+        "function": "HotCRP\\Authorize_Page::oauthtoken_api"
     },
     {
         "name": "paper", "get": true, "post": true,
         "function": "Paper_API::run_one",
         "parameters": "?p ?+dry_run ?+disable_users ?+add_topics ?+notify ?+notify_authors ?+reason ?+json ?forceShow",
-        "response": "?paper ?+dry_run ?+change_list ?+valid"
+        "response": "?paper ?dry_run ?change_list ?valid"
     },
     {
         "name": "paper", "delete": true, "paper": true,
@@ -202,7 +206,7 @@
         "name": "papers", "post": true,
         "function": "Paper_API::run_multi",
         "parameters": "?q ?t ?qt ?sort ?scoresort ?reviewer ?+dry_run ?+disable_users ?+add_topics ?+notify ?+notify_authors ?+reason ?+json ?forceShow",
-        "response": "?papers ?dry_run ?change_lists ?valid"
+        "response": "?papers ?dry_run ?status_list"
     },
     {
         "name": "pc", "get": true,
@@ -212,7 +216,8 @@
     },
     {
         "name": "reauth", "post": true,
-        "function": "Session_API::reauth"
+        "function": "Session_API::reauth",
+        "parameters": "?confirm ?=reason ?=email ?=password ?=totpcode"
     },
     {
         "name": "requestreview", "post": true, "paper": true,
@@ -220,12 +225,16 @@
         "parameters": "?round =email ?=given_name ?=family_name ?=name ?=affiliation ?=override ?=reason"
     },
     {
-        "name": "review", "get": true, "post": true, "paper": true,
-        "function": "Review_API::review"
+        "name": "review", "get": true, "paper": true,
+        "function": "Review_API::run_one"
+    },
+    {
+        "name": "reviews", "get": true,
+        "function": "Review_API::run_multi"
     },
     {
         "name": "reviewhistory", "get": true, "paper": true,
-        "function": "Review_API::reviewhistory"
+        "function": "ReviewMeta_API::reviewhistory"
     },
     {
         "name": "reviewfieldlibrary", "get": true, "allow_if": "chair",
@@ -234,19 +243,19 @@
     },
     {
         "name": "reviewrating", "get": true, "paper": true,
-        "function": "Review_API::reviewrating",
+        "function": "ReviewMeta_API::reviewrating",
         "parameters": "r",
         "response": "?ratings ?user_rating"
     },
     {
         "name": "reviewrating", "post": true, "paper": true,
-        "function": "Review_API::reviewrating",
+        "function": "ReviewMeta_API::reviewrating",
         "parameters": "r =user_rating",
         "response": "?ratings ?user_rating"
     },
     {
         "name": "reviewround", "post": true, "xxx": true, "paper": true,
-        "function": "Review_API::reviewround"
+        "function": "ReviewMeta_API::reviewround"
     },
     {
         "name": "reviewtoken", "get": true, "post": true,
@@ -273,8 +282,8 @@
     {
         "name": "search", "get": true,
         "function": "Search_API::search",
-        "parameters": "q ?t ?qt ?sort ?scoresort ?reviewer ?report ?warn_missing",
-        "response": "ids groups hotlist search_params"
+        "parameters": "q ?t ?qt ?sort ?scoresort ?reviewer ?report ?warn_missing ?hotlist",
+        "response": "ids groups search_params ?hotlist"
     },
     {
         "name": "searchactions", "get": true,
@@ -321,8 +330,8 @@
     {
         "name": "settings", "get": true, "post": true,
         "function": "Settings_API::run",
-        "parameters": "?=settings ?+dry_run ?+reset ?+filename",
-        "response": "?+dry_run ?+change_list settings"
+        "parameters": "?=settings ?+dry_run ?+reset ?+filename ?+filter ?+exclude",
+        "response": "?dry_run ?change_list settings"
     },
     {
         "name": "shepherd", "get": true, "paper": true,
@@ -388,7 +397,7 @@
         "name": "user", "get": true,
         "function": "User_API::user",
         "parameters": "email ?p ?potential_conflict",
-        "response": "found ?email ?given_name ?family_name ?affiliation ?potential_conflict ?orcid ?country"
+        "response": "match ?email ?given_name ?family_name ?affiliation ?potential_conflict ?orcid ?country"
     },
     {
         "name": "viewoptions", "get": true,
@@ -406,7 +415,7 @@
         "name": "votereport", "get": true, "paper": true,
         "function": "Tags_API::votereport_api",
         "parameters": "tag",
-        "response": "tag report"
+        "response": "vote_report"
     },
     {
         "name": "whoami", "get": true,

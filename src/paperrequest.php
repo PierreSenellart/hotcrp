@@ -105,7 +105,7 @@ class PaperRequest {
         }
         // check reviewId
         if (($rid = $qreq->reviewId) !== null) {
-            assert(ctype_digit($rid));
+            assert(is_int($rid) || ctype_digit($rid));
             if (($p = $conf->fetch_ivalue("select paperId from PaperReview where reviewId=?", $rid)) > 0) {
                 return $p;
             } else {
@@ -179,14 +179,12 @@ class PaperRequest {
             || ($qreq->method() !== "GET" && $qreq->method() !== "HEAD")) {
             return;
         }
-        $susers = Contact::session_users($qreq);
-        if (count($susers) > 1
+        $semails = Contact::session_emails($qreq);
+        if (count($semails) > 1
             && !$user->is_actas_user()
             && self::other_user_redirectable($qreq->navigation())) {
-            foreach ($susers as $email) {
-                $user->conf->prefetch_user_by_email($email);
-            }
-            foreach ($susers as $i => $email) {
+            $user->conf->prefetch_users_by_email($semails);
+            foreach ($semails as $i => $email) {
                 if (strcasecmp($user->email, $email) !== 0
                     && ($u = $user->conf->user_by_email($email, USER_SLICE))
                     && self::check_prow($prow, $u, $qreq)) {
@@ -274,6 +272,7 @@ class PaperRequest {
             return null;
         }
         // error
-        throw $user->perm_view_review($this->prow, null) ?? new FailureReason($user->conf, ["invalidId" => "review"]);
+        throw $user->perm_view_review($this->prow, null)
+            ?? $this->prow->failure_reason(["invalidId" => "review"]);
     }
 }

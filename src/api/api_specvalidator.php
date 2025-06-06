@@ -5,12 +5,14 @@
 class SpecValidator_API {
     const F_REQUIRED = 0x01;
     const F_POST = 0x02;
-    const F_BODY = 0x04;
-    const F_FILE = 0x08;
-    const F_SUFFIX = 0x10;
-    const F_PRESENT = 0x20;
-    const F_DEPRECATED = 0x40;
-    const FM_NONGET = 0x0E;
+    const F_QUERY = 0x04;
+    const F_BODY = 0x08;
+    const F_FILE = 0x10;
+    const F_SUFFIX = 0x20;
+    const F_PRESENT = 0x40;
+    const F_DEPRECATED = 0x80;
+    const FM_QUERYPOST = 0x06;
+    const FM_LOCATION = 0x1C;
 
     static function request($uf, Qrequest $qreq) {
         $post = $qreq->is_post();
@@ -18,6 +20,9 @@ class SpecValidator_API {
             self::error($qreq, "POST request handled by get handler");
         }
 
+        if (!isset($uf->parameters)) {
+            return;
+        }
         $parameters = $uf->parameters ?? [];
         if (is_string($parameters)) {
             $parameters = explode(" ", trim($parameters));
@@ -42,15 +47,22 @@ class SpecValidator_API {
                     $has_suffix = true;
                 } else if ($p[$i] === "*") {
                     $f &= ~self::F_REQUIRED;
+                    if (($f & self::FM_LOCATION) === 0) {
+                        $f |= self::FM_LOCATION;
+                    }
                     break;
                 } else {
                     break;
                 }
             }
-            if ($post || ($f & self::FM_NONGET) === 0) {
-                $n = substr($p, $i);
-                $known[$n] = $f;
+            if (($f & self::FM_LOCATION) === 0) {
+                $f |= self::F_QUERY;
             }
+            if (!$post && ($f & self::FM_QUERYPOST) !== self::F_QUERY) {
+                continue;
+            }
+            $n = substr($p, $i);
+            $known[$n] = $f;
         }
 
         $param = [];
@@ -61,7 +73,7 @@ class SpecValidator_API {
                     && ($n !== "redirect" || !($uf->redirect ?? false))) {
                     self::error($qreq, "query param `{$n}` unknown");
                 }
-            } else if (($t & self::F_BODY) !== 0) {
+            } else if (($t & self::F_QUERY) === 0) {
                 self::error($qreq, "query param `{$n}` should be in body");
             }
         }
@@ -88,10 +100,11 @@ class SpecValidator_API {
     }
 
     static function response($uf, Qrequest $qreq, $jr) {
-        if (!($jr instanceof JsonResult)) {
+        if (!($jr instanceof JsonResult)
+            || !isset($uf->response)) {
             return;
         }
-        $response = $uf->response ?? [];
+        $response = $uf->response;
         if (is_string($response)) {
             $response = explode(" ", trim($response));
         }
@@ -176,9 +189,8 @@ class SpecValidator_API {
             return "file param";
         } else if (($t & self::F_BODY) !== 0) {
             return "body param";
-        } else {
-            return "query param";
         }
+        return "query param";
     }
 
     static function error(Qrequest $qreq, $error) {

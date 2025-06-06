@@ -1,5 +1,5 @@
 <?php
-// hotcli.php -- HotCRP script for interacting with site APIs
+// Hotcrapi.php -- Hotcrapi command-line tool interacts with HotCRP APIs
 // Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
@@ -8,17 +8,17 @@ if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
 
 interface CLIBatchCommand {
     /** @return int */
-    function run(HotCLI_Batch $clib);
+    function run(Hotcrapi_Batch $clib);
 }
 
-class HotCLI_Batch_Site {
+class Hotcrapi_Batch_Site {
     /** @var string */
     public $site;
     /** @var string */
     public $apitoken;
 }
 
-class HotCLI_File {
+class Hotcrapi_File {
     /** @var resource */
     public $stream;
     /** @var string */
@@ -29,30 +29,49 @@ class HotCLI_File {
     public $size;
 
     /** @param string $fn
-     * @return HotCLI_File */
+     * @return Hotcrapi_File */
     static function make($fn, $mode = "rb") {
         if ($fn === "") {
             throw new CommandLineException("Empty filename");
         }
-        $cf = new HotCLI_File;
-        if ($fn === "-") {
-            $cf->stream = STDIN;
-            $cf->filename = null;
-            $cf->input_filename = "<stdin>";
+        $cf = new Hotcrapi_File;
+        if ($fn === "-"
+            && ($mode === "rb" || $mode === "wb" || $mode === "ab")) {
+            if ($mode === "rb") {
+                $cf->stream = STDIN;
+                $cf->input_filename = "<stdin>";
+            } else {
+                $cf->stream = STDOUT;
+                $cf->input_filename = "<stdout>";
+            }
         } else if (($cf->stream = @fopen($fn, $mode))) {
             $cf->filename = preg_replace('/\A.*\/(?=[^\/]+\z)/', "", $fn);
             $cf->input_filename = $fn;
         } else {
             throw CommandLineException::make_file_error($fn);
         }
-        if (($stat = fstat($cf->stream)) && $stat["size"] > 0) {
+        if (preg_match('/[rac]/', $mode)
+            && ($stat = fstat($cf->stream))
+            && $stat["size"] > 0) {
             $cf->size = $stat["size"];
         }
         return $cf;
     }
+
+    /** @param string $data
+     * @return Hotcrapi_File */
+    static function make_data($data) {
+        $cf = new Hotcrapi_File;
+        $cf->stream = fopen("php://temp", "w+b");
+        fwrite($cf->stream, $data);
+        rewind($cf->stream);
+        $cf->input_filename = "<data>";
+        $cf->size = strlen($data);
+        return $cf;
+    }
 }
 
-class HotCLI_Batch extends MessageSet {
+class Hotcrapi_Batch extends MessageSet {
     /** @var string
      * @readonly */
     public $site;
@@ -68,6 +87,9 @@ class HotCLI_Batch extends MessageSet {
     /** @var int
      * @readonly */
     public $chunk = 8 << 20;
+    /** @var bool
+     * @readonly */
+    public $progress = false;
 
     /** @var CurlHandle */
     public $curlh;
@@ -81,14 +103,29 @@ class HotCLI_Batch extends MessageSet {
     public $content_json;
 
     /** @var CLIBatchCommand */
-    private $command;
+    private $_command;
     /** @var ?string */
-    private $output;
+    private $_output;
+    /** @var ?string */
+    private $_output_file;
 
-    /** @var array<string,HotCLI_Batch_Site> */
-    private $siteconfig = [];
-    /** @var ?HotCLI_Batch_Site */
-    private $default_siteconfig;
+    /** @var array<string,Hotcrapi_Batch_Site> */
+    private $_siteconfig = [];
+    /** @var ?Hotcrapi_Batch_Site */
+    private $_default_siteconfig;
+    /** @var array<string,class-string<CLIBatchCommand>> */
+    private $_subcommand_class = [];
+
+    /** @var ?int */
+    private $_progress_start_time;
+    /** @var string */
+    private $_progress_prefix = "";
+    /** @var ?int */
+    private $_progress_time;
+    /** @var bool */
+    private $_progress_active = false;
+    /** @var bool */
+    private $_progress_printed = false;
 
     function __construct() {
         $this->curlh = curl_init();
@@ -124,27 +161,52 @@ class HotCLI_Batch extends MessageSet {
         return $this;
     }
 
+    /** @param bool $x
+     * @suppress PhanAccessReadOnlyProperty
+     * @return $this */
+    function set_progress($x) {
+        $this->progress = $x;
+        return $this;
+    }
+
     /** @suppress PhanAccessReadOnlyProperty
      * @return $this */
     function set_command(CLIBatchCommand $command) {
-        $this->command = $command;
+        $this->_command = $command;
+        return $this;
+    }
+
+    /** @param string $name
+     * @param class-string<CLIBatchCommand> $class
+     * @return $this */
+    function register_command($name, $class) {
+        $this->_subcommand_class[$name] = $class;
+        return $this;
+    }
+
+    /** @return ?string */
+    function output_file() {
+        return $this->_output_file;
+    }
+
+    /** @param ?string $filename
+     * @return $this */
+    function set_output_file($filename) {
+        $this->_output_file = $filename;
         return $this;
     }
 
     /** @param ?string $s
-     * @suppress PhanAccessReadOnlyProperty
      * @return $this */
     function set_output($s) {
-        $this->output = $s;
+        $this->_output = $s;
         return $this;
     }
 
     /** @param mixed $x
-     * @suppress PhanAccessReadOnlyProperty
      * @return $this */
     function set_json_output($x) {
-        $this->output = json_encode_db($x, JSON_PRETTY_PRINT) . "\n";
-        return $this;
+        return $this->set_output(json_encode_db($x, JSON_PRETTY_PRINT) . "\n");
     }
 
     /** @param string $s
@@ -161,7 +223,7 @@ class HotCLI_Batch extends MessageSet {
             return $this;
         }
         if (!isset($f)) {
-            $f = getenv("HOME") . "/.hotcliconfig";
+            $f = getenv("HOME") . "/.hotcrapi.conf";
             if (!file_exists($f)) {
                 return $this;
             }
@@ -183,39 +245,48 @@ class HotCLI_Batch extends MessageSet {
             ++$line;
             if (preg_match('/\A\s*+\[\s*+site\s*+(\w+|\".*?\"|(?=\]))\s*+\]\s*+\z/', $l, $m)) {
                 $sn = self::unquote($m[1]);
-                $this->siteconfig[$sn] = $this->siteconfig[$sn] ?? new HotCLI_Batch_Site;
+                $this->_siteconfig[$sn] = $this->_siteconfig[$sn] ?? new Hotcrapi_Batch_Site;
             } else if (preg_match('/\A\s*+\[/', $l)) {
                 $sn = null;
             } else if ($sn === null) {
                 continue;
-            } else if (preg_match('/\A\s*+(?:site|url)\s*+=\s*+([^\"]++|\".*?\")\s*+\z/', $l, $m)) {
+            } else if (preg_match('/\A\s*+(?:site|url)\s*+=\s*+([^\"\s]++|\".*?\")\s*+\z/', $l, $m)) {
                 $s = self::unquote($m[1]);
                 if (!preg_match('/\Ahttps?:\/\//', $s)) {
                     throw new CommandLineException("{$fname}:{$line}: Invalid `site`");
                 }
-                $this->siteconfig[$sn]->site = $s;
-            } else if (preg_match('/\A\s*+apitoken\s*+=\s*+([^\"]++|\".*?\")\s*+\z/', $l, $m)) {
+                $this->_siteconfig[$sn]->site = $s;
+            } else if (preg_match('/\A\s*+(?:api|)token\s*+=\s*+([^\"]++|\".*?\")\s*+\z/', $l, $m)) {
                 $s = self::unquote($m[1]);
                 if (!preg_match('/\Ahct_[A-Za-z0-9]{30,}/', $s)) {
                     throw new CommandLineException("{$fname}:{$line}: Invalid `apitoken`");
                 }
-                $this->siteconfig[$sn]->apitoken = $s;
+                $this->_siteconfig[$sn]->apitoken = $s;
             } else if (preg_match('/\A\s*+default\s*+=\s*+true\s*+\z/', $l, $m)) {
-                $this->default_siteconfig = $this->siteconfig[$sn];
+                $this->_default_siteconfig = $this->_siteconfig[$sn];
+            }
+        }
+
+        if (($dsc = $this->_default_siteconfig)) {
+            if ($this->site === null && $dsc->site !== null) {
+                $this->set_site($dsc->site);
+            }
+            if ($this->apitoken === null && $dsc->apitoken !== null) {
+                $this->set_apitoken($dsc->apitoken);
             }
         }
     }
 
-    /** @return ?HotCLI_Batch_Site */
+    /** @return ?Hotcrapi_Batch_Site */
     function default_site() {
-        return $this->default_siteconfig;
+        return $this->_default_siteconfig;
     }
 
-    /** @param string|HotCLI_Batch_Site $s
+    /** @param string|Hotcrapi_Batch_Site $s
      * @return $this
      * @suppress PhanAccessReadOnlyProperty */
     function set_site($s) {
-        if ($s instanceof HotCLI_Batch_Site) {
+        if ($s instanceof Hotcrapi_Batch_Site) {
             if ($s->site !== null) {
                 $this->site = $s->site;
             }
@@ -261,18 +332,102 @@ class HotCLI_Batch extends MessageSet {
         return $this->apitoken !== null;
     }
 
-    /** @param ?callable(HotCLI_Batch):bool $skip_function
+    /** @return $this */
+    function progress_start() {
+        $this->_progress_start_time = hrtime(true);
+        return $this;
+    }
+
+    /** @param string $prefix
+     * @return $this */
+    function progress_prefix($prefix) {
+        $this->_progress_prefix = $prefix;
+        return $this;
+    }
+
+    function progress_show($amount, $max) {
+        if (!$this->progress) {
+            return;
+        }
+        $now = hrtime(true);
+        if ($this->_progress_time === null
+            ? $now - $this->_progress_start_time < 500000000
+            : $now - $this->_progress_time < 100000000) {
+            return;
+        }
+        $m = $this->_progress_printed ? "\r" : "";
+        $this->_progress_time = $now;
+        if ($max === null || $amount === null) {
+            // bounce a 3-character spaceship every 4 seconds
+            // 0 seconds: 0 spaces; 2 seconds: 40 spaces; 4 seconds: 80 spaces (= 0 spaces)
+            $mod4sec = (int) (($now - $this->_progress_start_time) / 1000) % 4000000;
+            $xsp = (int) floor($mod4sec * 80 / 4000000);
+            $sp = $xsp > 40 ? 80 - $xsp : $xsp;
+            $s = sprintf("%s%s%*s===%*s | %s\x1b[K", $m,
+                         $this->_progress_prefix,
+                         $sp, "", 40 - $sp, "",
+                         $amount === null ? "" : unparse_byte_size_binary_f($amount));
+        } else {
+            $barw = $max === 0 ? 40 : (int) round($amount / $max * 40);
+            $s = sprintf("%s%s%s%3d%% | %-40s | %s\x1b[K", $m,
+                         $this->_progress_prefix,
+                         $this->_progress_prefix === "" ? "" : " ",
+                         $max === 0 ? 100 : (int) round($amount / $max * 100),
+                         str_repeat("#", $barw),
+                         unparse_byte_size_binary_f($amount));
+        }
+        fwrite(STDERR, $s);
+        $this->_progress_printed = true;
+    }
+
+    function progress_snapshot() {
+        if ($this->_progress_printed) {
+            fwrite(STDERR, "\n");
+            $this->_progress_printed = false;
+        }
+    }
+
+    function progress_end() {
+        $this->progress_snapshot();
+        $this->_progress_start_time = $this->_progress_time = null;
+    }
+
+    /** @param callable(resource,int,int,int,int) $progressf
+     * @return $this */
+    function set_curl_progress($progressf) {
+        if ($this->progress) {
+            $curlopt = defined("CURLOPT_XFERINFOFUNCTION") ? CURLOPT_XFERINFOFUNCTION : CURLOPT_PROGRESSFUNCTION;
+            curl_setopt($this->curlh, $curlopt, $progressf);
+            curl_setopt($this->curlh, CURLOPT_NOPROGRESS, 0);
+            $this->_progress_active = true;
+        }
+        return $this;
+    }
+
+    /** @param ?callable(Hotcrapi_Batch):bool $skip_function
      * @return bool */
     function exec_api($skip_function = null) {
         if ($this->verbose) {
-            fwrite(STDERR, curl_getinfo($this->curlh, CURLINFO_EFFECTIVE_URL));
+            $url = curl_getinfo($this->curlh, CURLINFO_EFFECTIVE_URL);
+            if ($this->_progress_active) {
+                $this->progress_snapshot();
+                fwrite(STDERR, "{$url}\n");
+            } else {
+                fwrite(STDERR, $url);
+            }
         }
         rewind($this->headerf);
         ftruncate($this->headerf, 0);
         $this->content_string = curl_exec($this->curlh);
+        curl_setopt($this->curlh, CURLOPT_NOPROGRESS, 1);
         $this->status_code = curl_getinfo($this->curlh, CURLINFO_RESPONSE_CODE);
         if ($this->verbose) {
-            fwrite(STDERR, ": {$this->status_code}\n");
+            if ($this->_progress_active) {
+                $this->progress_snapshot();
+                fwrite(STDERR, curl_getinfo($this->curlh, CURLINFO_EFFECTIVE_URL) . " → {$this->status_code}\n");
+            } else {
+                fwrite(STDERR, " → {$this->status_code}\n");
+            }
         }
         $this->content_json = json_decode($this->content_string);
         if (!is_object($this->content_json)) {
@@ -318,75 +473,72 @@ class HotCLI_Batch extends MessageSet {
     /** @return int */
     function run() {
         if (!$this->has_site()) {
-            throw new CommandLineException("`-s SITE` required");
+            throw new CommandLineException("`-S SITE` required");
         }
         if (!$this->has_apitoken()) {
-            throw new CommandLineException("`-t APITOKEN` required");
+            throw new CommandLineException("`-T APITOKEN` required");
         }
-        $status = $this->command->run($this);
+        $status = $this->_command->run($this);
+        $this->progress_snapshot();
         if (!$this->quiet) {
             fwrite(STDERR, $this->full_feedback_text(true));
         }
-        if (($this->output ?? "") !== "") {
-            fwrite(STDOUT, $this->output);
+        if ($this->_output !== null) {
+            $of = Hotcrapi_File::make($this->_output_file ?? "-", "wb");
+            fwrite($of->stream, $this->_output);
         }
         return $status;
     }
 
     /** @param list<string> $argv
-     * @return HotCLI_Batch */
+     * @return Hotcrapi_Batch */
     static function make_args($argv) {
-        global $Opt;
+        $hcli = new Hotcrapi_Batch;
+
         $getopt = (new Getopt)->long(
-            "help,h !",
+            "help::,h:: !",
+            "S:,siteurl:,url: =SITE Site URL",
+            "T:,token: =APITOKEN API token",
+            "F:,config: =FILE Set configuration file [~/.hotcrapi.conf]",
             "verbose,V Be verbose",
-            "F:,config: =FILE Set configuration file",
-            "s:,siteurl:,url:,u: =SITE Site URL",
-            "t:,token: =APITOKEN API token",
-            "filename:,f: =FILENAME !upload Filename for uploaded file",
-            "no-filename !",
-            "mimetype:,m: =MIMETYPE !upload Type for uploaded file",
-            "p:,paper: =PID !paper Submission ID",
-            "q:,query: =SEARCH !paper Submission search",
-            "e,edit !paper Change submissions",
-            "delete !paper Delete submission",
-            "dry-run,d !paper Don’t actually edit",
-            "no-notify Don’t notify users",
-            "no-notify-authors Don’t notify authors",
-            "chunk: =CHUNKSIZE Maximum upload chunk size [5M]",
-            "quiet Do not print error messages",
-        )->subcommand(true,
-            "upload Upload file to HotCRP and return token",
-            "paper Retrieve or change submissions"
-        )->description("Interact with HotCRP site using APIs.
-Usage: php batch/hotcli.php -u SITEURL -t APITOKEN COMMAND ARGS...")
+            "quiet,q Do not print error messages",
+            "no-progress Do not print progress bars",
+            "progress !",
+            "chunk: =CHUNKSIZE Maximum upload chunk size [8M]"
+        )->description("Interact with HotCRP site using APIs
+Usage: php batch/hotcrapi.php -S SITEURL -T APITOKEN SUBCOMMAND ARGS...")
          ->helpopt("help")
-         ->maxarg(1);
+         ->interleave(true)
+         ->subcommand(true);
+        Test_CLIBatch::register($hcli, $getopt);
+        Paper_CLIBatch::register($hcli, $getopt);
+        Settings_CLIBatch::register($hcli, $getopt);
+        Upload_CLIBatch::register($hcli, $getopt);
         $arg = $getopt->parse($argv);
 
-        $hcli = new HotCLI_Batch;
         $hcli->load_config_file($arg["F"] ?? null);
 
-        if (isset($arg["s"])) {
-            $hcli->set_site($arg["s"]);
-        } else if (isset($_ENV["HOTCLI_SITE"])) {
-            $hcli->set_site($_ENV["HOTCLI_SITE"]);
-        } else if (($s = $hcli->default_site())) {
-            $hcli->set_site($s);
+        if (($sc = $hcli->default_site())) {
+            $hcli->set_site($sc);
+        }
+        if (isset($arg["S"])) {
+            $hcli->set_site($arg["S"]);
+        } else if (isset($_ENV["HOTCRAPI_SITE"])) {
+            $hcli->set_site($_ENV["HOTCRAPI_SITE"]);
         }
 
-        if (isset($arg["t"])) {
-            if (str_starts_with($arg["t"], "<")) {
-                $t = @file_get_contents(substr($arg["t"], 1));
+        if (isset($arg["T"])) {
+            if (str_starts_with($arg["T"], "<")) {
+                $t = @file_get_contents(substr($arg["T"], 1));
                 if ($t === false) {
-                    throw CommandLineException::make_file_error(substr($arg["t"], 1));
+                    throw CommandLineException::make_file_error(substr($arg["T"], 1));
                 }
             } else {
-                $t = $arg["t"];
+                $t = $arg["T"];
             }
             $hcli->set_apitoken($t);
-        } else if (isset($_ENV["HOTCLI_APITOKEN"])) {
-            $hcli->set_apitoken($_ENV["HOTCLI_APITOKEN"]);
+        } else if (isset($_ENV["HOTCRAPI_TOKEN"])) {
+            $hcli->set_apitoken($_ENV["HOTCRAPI_TOKEN"]);
         }
 
         if (isset($arg["quiet"])) {
@@ -394,6 +546,12 @@ Usage: php batch/hotcli.php -u SITEURL -t APITOKEN COMMAND ARGS...")
         }
         if (isset($arg["verbose"])) {
             $hcli->set_verbose(true);
+        }
+        if (isset($arg["progress"])
+            || (!isset($arg["quiet"])
+                && !isset($arg["no-progress"])
+                && posix_isatty(STDERR))) {
+            $hcli->set_progress(true);
         }
         if (isset($arg["chunk"])) {
             if (!preg_match('/\A([\d+]\.?\d*|\.\d+)([kmg]i?b?|)\z/i', $arg["chunk"], $m)) {
@@ -412,10 +570,11 @@ Usage: php batch/hotcli.php -u SITEURL -t APITOKEN COMMAND ARGS...")
             $hcli->set_chunk((int) $n);
         }
 
-        if ($arg["_subcommand"] === "upload") {
-            $hcli->set_command(Upload_CLIBatch::make_arg($hcli, $getopt, $arg));
-        } else if ($arg["_subcommand"] === "paper") {
-            $hcli->set_command(Paper_CLIBatch::make_arg($hcli, $getopt, $arg));
+        if (($callback = $hcli->_subcommand_class[$arg["_subcommand"]] ?? null)) {
+            if (is_string($callback) && class_exists($callback)) {
+                $callback = "{$callback}::make_arg";
+            }
+            $hcli->set_command(call_user_func($callback, $hcli, $getopt, $arg));
         } else {
             throw new CommandLineException("Subcommand required");
         }
@@ -425,5 +584,5 @@ Usage: php batch/hotcli.php -u SITEURL -t APITOKEN COMMAND ARGS...")
 }
 
 if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
-    exit(HotCLI_Batch::make_args($argv)->run());
+    exit(Hotcrapi_Batch::make_args($argv)->run());
 }

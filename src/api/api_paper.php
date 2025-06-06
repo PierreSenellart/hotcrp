@@ -28,14 +28,14 @@ class Paper_API extends MessageSet {
     /** @var ?string */
     private $docdir;
 
-    /** @var bool */
-    private $ok = true;
     /** @var list<list<string>> */
     private $change_lists = [];
     /** @var list<object> */
     private $papers = [];
     /** @var list<bool> */
     private $valid = [];
+    /** @var list<null|int|'new'> */
+    private $pids = [];
     /** @var int */
     private $npapers = 0;
     /** @var null|int|string */
@@ -54,8 +54,23 @@ class Paper_API extends MessageSet {
         $this->user = $user;
     }
 
-    /** @return array{PaperSearch,PaperInfoSet} */
-    static private function make_search(Contact $user, Qrequest $qreq) {
+    /** @return JsonResult */
+    static function run_get_one(Contact $user, Qrequest $qreq, ?PaperInfo $prow) {
+        if (!isset($qreq->p)) {
+            JsonResult::make_missing_error("p")->complete();
+        }
+        $fr = $prow ? $user->perm_view_paper($prow) : $qreq->annex("paper_whynot");
+        if (!$prow || $fr) {
+            Conf::paper_error_json_result($fr)->complete();
+        }
+        $pj = (new PaperExport($user))->paper_json($prow);
+        assert(!!$pj);
+        return new JsonResult(["ok" => true, "paper" => $pj]);
+    }
+
+    /** @param array<string,mixed> $args
+     * @return array{PaperSearch,PaperInfoSet} */
+    static function make_search(Contact $user, Qrequest $qreq, $args = []) {
         $qreq->t = $qreq->t ?? "viewable";
         $srch = new PaperSearch($user, $qreq);
         if (friendly_boolean($qreq->warn_missing)) {
@@ -64,31 +79,16 @@ class Paper_API extends MessageSet {
         $prows = $srch->user->paper_set([
             "paperId" => $srch->paper_ids(),
             "options" => true, "topics" => true, "allConflictType" => true
-        ]);
-        if ($srch->nontrivial_sort()) {
-            $pidmap = array_flip($srch->sorted_paper_ids());
-            $prows->sort_by(function ($a, $b) use ($pidmap) {
-                return $pidmap[$a->paperId] <=> $pidmap[$b->paperId];
-            });
-        }
+        ] + $args);
+        $prows->sort_by_search($srch);
         return [$srch, $prows];
     }
 
-    /** @param 1|2|3 $mode
-     * @return JsonResult */
-    static function run_get(Contact $user, Qrequest $qreq, ?PaperInfo $prow, $mode) {
-        if (isset($qreq->p) && ($mode & self::M_ONE) !== 0) {
-            if ($prow && ($pj = (new PaperExport($user))->paper_json($prow))) {
-                return new JsonResult(["ok" => true, "paper" => $pj]);
-            }
-            $fr = $prow ? $user->perm_view_paper($prow) : $qreq->annex("paper_whynot");
-            return Conf::paper_error_json_result($fr);
-        } else if ($mode === self::M_ONE) {
-            return JsonResult::make_missing_error("p");
-        } else if (!isset($qreq->q)) {
+    /** @return JsonResult */
+    static function run_get_multi(Contact $user, Qrequest $qreq) {
+        if (!isset($qreq->q)) {
             return JsonResult::make_missing_error("q");
         }
-
         list($srch, $prows) = self::make_search($user, $qreq);
 
         $pex = new PaperExport($user);
@@ -100,7 +100,7 @@ class Paper_API extends MessageSet {
 
         return new JsonResult([
             "ok" => true,
-            "message_list" => $srch->message_list(),
+            "message_list" => $srch->message_list_with_default_field("q"),
             "papers" => $pjs
         ]);
     }
@@ -210,7 +210,7 @@ class Paper_API extends MessageSet {
 
         // process result
         if ($mode === self::M_ONE) {
-            return $this->run_post_single_json($prow, $jp);
+            return $this->run_post_single_json($prow, $jp, $qreq->p);
         } else if (!$this->user->privChair) {
             return JsonResult::make_permission_error();
         } else if ($mode === self::M_MATCH) {
@@ -289,9 +289,12 @@ class Paper_API extends MessageSet {
     }
 
     /** @return JsonResult */
-    private function run_post_single_json(?PaperInfo $prow, $jp) {
+    private function run_post_single_json(?PaperInfo $prow, $jp, $parg) {
         $this->single = true;
-        if ($this->set_json_landmark(0, $jp, $prow ? $prow->paperId : null)) {
+        if (is_string($parg) && ctype_digit($parg)) {
+            $parg = intval($parg);
+        }
+        if ($this->set_json_landmark(0, $jp, $parg)) {
             $ps = $this->paper_status();
             $ok = $ps->prepare_save_paper_json($jp, $prow);
             $this->execute_save($ok, $ps);
@@ -354,6 +357,11 @@ class Paper_API extends MessageSet {
             $ok = $ps->execute_save();
         }
         foreach ($ps->message_list() as $mi) {
+            if ($mi->field
+                && str_ends_with($mi->field, ":context")
+                && !str_starts_with($mi->field, "status:")) {
+                continue;
+            }
             if (!$this->single) {
                 $mi->landmark = $this->landmark;
             }
@@ -370,8 +378,8 @@ class Paper_API extends MessageSet {
         } else {
             $this->papers[] = null;
         }
+        $this->pids[] = $ps->saved_pid() ?? "new";
         $this->valid[] = $ok;
-        $this->ok = $this->ok && $ok;
     }
 
     /** @param PaperStatus $ps */
@@ -387,30 +395,47 @@ class Paper_API extends MessageSet {
     }
 
     private function execute_fail() {
-        $this->ok = false;
         $this->change_lists[] = null;
         $this->papers[] = null;
+        $this->pids[] = null;
         $this->valid[] = false;
     }
 
     /** @return JsonResult */
     private function make_result() {
+        $ok = empty($this->valid) || array_find($this->valid, function ($x) { return !!$x; });
         $jr = new JsonResult([
-            "ok" => $this->ok,
+            "ok" => $ok,
             "message_list" => $this->message_list()
         ]);
         if ($this->dry_run) {
             $jr->content["dry_run"] = true;
         }
         if ($this->single) {
-            $jr->content["change_list"] = $this->change_lists[0];
             $jr->content["valid"] = $this->valid[0];
+            $jr->content["change_list"] = $this->change_lists[0];
+            if ($this->pids[0] !== null) {
+                $jr->content["pid"] = $this->pids[0];
+            }
             if ($this->npapers > 0) {
                 $jr->content["paper"] = $this->papers[0];
             }
         } else {
-            $jr->content["change_lists"] = $this->change_lists;
-            $jr->content["valid"] = $this->valid;
+            $ul = [];
+            for ($i = 0; $i !== count($this->valid); ++$i) {
+                $u = [
+                    "valid" => $this->valid[$i],
+                    "change_list" => $this->change_lists[$i]
+                ];
+                if ($this->pids[$i] !== null) {
+                    $u["pid"] = $this->pids[$i];
+                }
+                if ($this->dry_run) {
+                    $u["dry_run"] = true;
+                }
+                $ul[] = (object) $u;
+            }
+            $jr->content["status_list"] = $ul;
             if (!$this->dry_run) {
                 $jr->content["papers"] = $this->papers;
             }
@@ -421,9 +446,8 @@ class Paper_API extends MessageSet {
 
     /** @param object $j
      * @param 0|1|2|3 $pidflags
-     * @param int|'new' $nullvalue
      * @return null|int|'new' */
-    static function analyze_json_pid(Conf $conf, $j, $pidflags = 0, $nullvalue = "new") {
+    static function analyze_json_pid(Conf $conf, $j, $pidflags = 0) {
         if (($pidflags & self::PIDFLAG_IGNORE_PID) !== 0) {
             if (isset($j->pid)) {
                 $j->__original_pid = $j->pid;
@@ -441,23 +465,33 @@ class Paper_API extends MessageSet {
             }
         }
         $pid = $j->pid ?? $j->id ?? null;
-        if ($pid === "new"
+        if ($pid === null
+            || $pid === "new"
             || (is_int($pid) && $pid > 0 && $pid <= PaperInfo::PID_MAX)) {
             return $pid;
-        } else if ($pid === null) {
-            return $nullvalue;
         }
-        return null;
+        throw new ErrorException;
     }
 
+    /** @param int $index
+     * @param object $jp
+     * @param ?int $expected
+     * @return bool */
     private function set_json_landmark($index, $jp, $expected = null) {
-        $pidish = self::analyze_json_pid($this->conf, $jp, 0, $expected ?? "new");
-        if ($pidish && ($expected === null || $pidish === $expected)) {
-            $this->landmark = $index;
-            return true;
+        try {
+            $pidish = self::analyze_json_pid($this->conf, $jp, 0);
+            if ($pidish === null && $expected !== null) {
+                $jp->pid = $expected;
+            }
+            if (($pidish ?? $expected) === ($expected ?? $pidish)) {
+                $this->landmark = $index;
+                return true;
+            }
+            $msg = "<0>ID mismatch";
+        } catch (ErrorException $ex) {
+            $msg = "<0>Format error";
         }
         $pidkey = isset($jp->pid) || !isset($jp->id) ? "pid" : "id";
-        $msg = $pidish ? "<0>ID does not match" : "<0>Format error";
         $mi = $this->error_at($pidkey, $msg);
         if (!$this->single) {
             $mi->landmark = $index;
@@ -613,10 +647,11 @@ class Paper_API extends MessageSet {
         }
 
         if (!$this->user->can_administer($prow)) {
-            return JsonResult::make_permission_error(null, "<0>Only administrators can permanently delete a {$this->conf->snouns[0]}");
+            return JsonResult::make_permission_error(null, "<0>Only administrators can permanently delete {$this->conf->snouns[1]}");
         }
 
         $this->change_lists[] = ["delete"];
+        $this->pids[] = $prow->paperId;
         if ($if_unmodified_since !== null
             && $if_unmodified_since < $prow->timeModified) {
             $this->error_at("if_unmodified_since", $this->conf->_("<5><strong>Edit conflict</strong>: The {submission} has changed"));
@@ -632,7 +667,6 @@ class Paper_API extends MessageSet {
             }
             $this->valid[] = $prow->delete_from_database($this->user);
         }
-        $this->ok = $this->valid[0];
         return $this->make_result();
     }
 
@@ -643,12 +677,20 @@ class Paper_API extends MessageSet {
         if (friendly_boolean($qreq->forceShow) !== false) {
             $user->add_overrides(Contact::OVERRIDE_CONFLICT);
         }
-        if ($qreq->is_get()) {
-            $jr = self::run_get($user, $qreq, $prow, $mode);
-        } else if ($qreq->method() === "DELETE") {
-            $jr = (new Paper_API($user))->run_delete($qreq, $prow);
-        } else {
-            $jr = (new Paper_API($user))->run_post($qreq, $prow, $mode);
+        try {
+            if ($qreq->is_get()) {
+                if ($mode === self::M_ONE) {
+                    $jr = self::run_get_one($user, $qreq, $prow);
+                } else {
+                    $jr = self::run_get_multi($user, $qreq);
+                }
+            } else if ($qreq->method() === "DELETE") {
+                $jr = (new Paper_API($user))->run_delete($qreq, $prow);
+            } else {
+                $jr = (new Paper_API($user))->run_post($qreq, $prow, $mode);
+            }
+        } catch (JsonResult $jrex) {
+            $jr = $jrex;
         }
         $user->set_overrides($old_overrides);
         if (($jr->content["message_list"] ?? null) === []) {

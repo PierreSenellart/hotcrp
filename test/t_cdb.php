@@ -255,14 +255,14 @@ class Cdb_Tester {
         xassert($user_van->act_author_view($paper1));
     }
 
-    function test_merge_accounts() {
+    function test_add_annes() {
         // user merging
-        $this->us1->save_user((object) ["email" => "anne1@dudfield.org", "tags" => ["a#1"], "roles" => (object) ["pc" => true]]);
+        $this->us1->save_user((object) ["email" => "anne1@dudfield.org", "tags" => ["a#1"], "roles" => (object) ["pc" => true], "first" => "Anne Elizabeth", "last" => "Dudfield"]);
         $this->us1->save_user((object) ["email" => "anne2@dudfield.org", "first" => "Anne", "last" => "Dudfield", "data" => (object) ["data_test" => 139], "tags" => ["a#2", "b#3"], "roles" => (object) ["sysadmin" => true], "collaborators" => "derpo\n"]);
         $user_anne1 = user("anne1@dudfield.org");
         $a1id = $user_anne1->contactId;
-        xassert_eqq($user_anne1->firstName, "");
-        xassert_eqq($user_anne1->lastName, "");
+        xassert_eqq($user_anne1->firstName, "Anne Elizabeth");
+        xassert_eqq($user_anne1->lastName, "Dudfield");
         xassert_eqq($user_anne1->collaborators(), "");
         xassert_eqq($user_anne1->tag_value("a"), 1.0);
         xassert_eqq($user_anne1->tag_value("b"), null);
@@ -294,30 +294,6 @@ class Cdb_Tester {
         $paper3 = $this->conf->checked_paper_by_id(3);
         xassert_eqq($paper3->tag_value("{$a1id}~butt"), null);
         xassert_eqq($paper3->tag_value("{$a2id}~butt"), 4.0);
-
-        $merger = new MergeContacts($user_anne2, $user_anne1);
-        xassert($merger->run());
-        $user_anne1 = user("anne1@dudfield.org");
-        $user_anne2 = maybe_user("anne2@dudfield.org");
-        xassert($user_anne1 && !$user_anne2);
-        xassert_eqq($user_anne1->firstName, "Anne");
-        xassert_eqq($user_anne1->lastName, "Dudfield");
-        xassert_eqq($user_anne1->collaborators(), "All (derpo)");
-        xassert_eqq($user_anne1->tag_value("a"), 1.0);
-        xassert_eqq($user_anne1->tag_value("b"), 3.0);
-        xassert_eqq($user_anne1->roles, Contact::ROLE_PC | Contact::ROLE_ADMIN);
-        xassert_eqq($user_anne1->data("data_test"), 139);
-        xassert_eqq($user_anne1->email, "anne1@dudfield.org");
-        $paper1 = $this->conf->checked_paper_by_id(1);
-        xassert($paper1->has_conflict($user_anne1));
-        xassert_eqq($paper1->tag_value("{$a2id}~butt"), null);
-        xassert_eqq($paper1->tag_value("{$a1id}~butt"), 1.0);
-        $paper2 = $this->conf->checked_paper_by_id(2);
-        xassert_eqq($paper2->tag_value("{$a2id}~butt"), null);
-        xassert_eqq($paper2->tag_value("{$a1id}~butt"), 2.0);
-        $paper3 = $this->conf->checked_paper_by_id(3);
-        xassert_eqq($paper3->tag_value("{$a2id}~butt"), null);
-        xassert_eqq($paper3->tag_value("{$a1id}~butt"), 4.0);
     }
 
     function test_role_save_formats() {
@@ -521,17 +497,21 @@ class Cdb_Tester {
         xassert_eqq($rrow->contactId, $user_cengiz->contactId);
 
         // current user is logged in as both Cengiz and Sophia
-        Contact::$session_users = ["cengiz@isi.edu", "sophia@dros.nl"];
+        $qsession = new MemoryQsession("dfnoafndwqf", ["us" => ["cengiz@isi.edu", "sophia@dros.nl"]]);
 
         // current user cannot edit Cengiz's review for some random user
-        $result = RequestReview_API::claimreview($user_cengiz, new Qrequest("POST", ["p" => "3", "r" => "$rrid", "email" => "betty6@manchette.net"]), $paper3);
+        $qreq = (new Qrequest("POST", ["p" => "3", "r" => "{$rrid}", "email" => "betty6@manchette.net"]))
+            ->set_qsession($qsession);
+        $result = RequestReview_API::claimreview($user_cengiz, $qreq, $paper3);
         xassert_eqq($result->content["ok"], false);
         $rrow = $paper3->fresh_review_by_id($rrid);
         xassert(!!$rrow);
         xassert_eqq($rrow->contactId, $user_cengiz->contactId);
 
         // current user can claim Sophia's review, even as Cengiz
-        $result = RequestReview_API::claimreview($user_cengiz, new Qrequest("POST", ["p" => "3", "r" => "$rrid", "email" => "sophia@dros.nl"]), $paper3);
+        $qreq = (new Qrequest("POST", ["p" => "3", "r" => "{$rrid}", "email" => "sophia@dros.nl"]))
+            ->set_qsession($qsession);
+        $result = RequestReview_API::claimreview($user_cengiz, $qreq, $paper3);
         xassert_eqq($result->content["ok"], true);
         $user_sophia = $this->conf->checked_user_by_email("sophia@dros.nl");
         xassert(!!$user_sophia);
@@ -539,8 +519,6 @@ class Cdb_Tester {
         xassert(!!$rrow);
         xassert_neqq($rrow->contactId, $user_cengiz->contactId);
         xassert_eqq($rrow->contactId, $user_sophia->contactId);
-
-        Contact::$session_users = null;
     }
 
     function test_cdb_roles_1() {
@@ -898,7 +876,7 @@ class Cdb_Tester {
 
         // reset gussie's password
         $gussie = $this->conf->fresh_user_by_email("gussie@cat.com");
-        $qreq = TestRunner::make_qreq($gussie, "newaccount?email=gussie@cat.com", "POST");
+        $qreq = TestQreq::post_page("newaccount", ["email" => "gussie@cat.com"])->set_user($gussie);
         $cs = $this->conf->page_components($gussie, $qreq);
         $sp = $cs->callable("Signin_Page");
         try {
@@ -907,7 +885,7 @@ class Cdb_Tester {
         }
         xassert_str_starts_with($sp->_reset_tokstr ?? "", "hcpw1");
 
-        $qreq = TestRunner::make_qreq($gussie, "resetpassword?email=gussie@cat.com", "POST");
+        $qreq = TestQreq::post_page("resetpassword", ["email" => "gussie@cat.com"])->set_user($gussie);
         $qreq->set_req("resetcap", $sp->_reset_tokstr);
         $qreq->set_req("password", "Tiny dancer");
         $qreq->set_req("password2", "Tiny dancer");
@@ -970,10 +948,12 @@ class Cdb_Tester {
 
         $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
         $lu_puma = $this->conf->user_by_email("puma@fart.edu");
+        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
         xassert_eqq($lu_leopard, null);
         xassert_eqq($lu_puma, null);
+        xassert_eqq($lu_mtnlion, null);
 
-        $lu_puma = Contact::make_email($this->conf, "puma@fart.edu")->store();
+        $lu_puma = $this->conf->ensure_user_by_email("puma@fart.edu");
         xassert(!!$lu_puma);
         $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
         xassert_eqq($lu_leopard->cflags & Contact::CF_PRIMARY, Contact::CF_PRIMARY);
@@ -983,11 +963,8 @@ class Cdb_Tester {
 
         // changing a primary into a secondary also affects its secondaries
         Dbl::qe($this->conf->dblink, "insert into ContactInfo set firstName='Mountain Lion', lastName='Face', email='mtnlion@fart.edu', affiliation='Place University', collaborators='Newsweek Magazine', password=' unset', cflags=0");
-
-        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
+        $lu_mtnlion = $this->conf->fresh_user_by_email("mtnlion@fart.edu");
         (new ContactPrimary)->link($lu_leopard, $lu_mtnlion);
-        $lu_puma = $this->conf->user_by_email("puma@fart.edu");
-        $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
         xassert_eqq($lu_mtnlion->cflags & Contact::CF_PRIMARY, Contact::CF_PRIMARY);
         xassert_eqq($lu_puma->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_leopard->cflags & Contact::CF_PRIMARY, 0);
@@ -996,9 +973,6 @@ class Cdb_Tester {
         xassert_eqq($lu_mtnlion->primaryContactId, 0);
 
         (new ContactPrimary)->link($lu_mtnlion, $lu_leopard);
-        $lu_puma = $this->conf->user_by_email("puma@fart.edu");
-        $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
-        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
         xassert_eqq($lu_leopard->cflags & Contact::CF_PRIMARY, Contact::CF_PRIMARY);
         xassert_eqq($lu_puma->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_mtnlion->cflags & Contact::CF_PRIMARY, 0);
@@ -1008,9 +982,6 @@ class Cdb_Tester {
 
         // remove secondaries one at a time
         (new ContactPrimary)->link($lu_mtnlion, null);
-        $lu_puma = $this->conf->user_by_email("puma@fart.edu");
-        $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
-        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
         xassert_eqq($lu_leopard->cflags & Contact::CF_PRIMARY, Contact::CF_PRIMARY);
         xassert_eqq($lu_puma->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_mtnlion->cflags & Contact::CF_PRIMARY, 0);
@@ -1019,9 +990,6 @@ class Cdb_Tester {
         xassert_eqq($lu_leopard->primaryContactId, 0);
 
         (new ContactPrimary)->link($lu_puma, null);
-        $lu_puma = $this->conf->user_by_email("puma@fart.edu");
-        $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
-        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
         xassert_eqq($lu_leopard->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_puma->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_mtnlion->cflags & Contact::CF_PRIMARY, 0);
@@ -1034,19 +1002,18 @@ class Cdb_Tester {
         $lu_cougar = $this->conf->user_by_email("cougar@fart.edu");
         (new ContactPrimary)->link($lu_puma, $lu_cougar);
         (new ContactPrimary)->link($lu_leopard, $lu_mtnlion);
-        // cross-group link
+        // have puma->cougar, leopard->mtnlion
+        // link cougar->leopard
+        // want puma->leopard, cougar->leopard, mtnlion independent
+        // (it's not clear what the right semantics are)
         (new ContactPrimary)->link($lu_cougar, $lu_leopard);
-        $lu_puma = $this->conf->user_by_email("puma@fart.edu");
-        $lu_leopard = $this->conf->user_by_email("leopard@fart.edu");
-        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
-        $lu_cougar = $this->conf->user_by_email("cougar@fart.edu");
         xassert_eqq($lu_cougar->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_leopard->cflags & Contact::CF_PRIMARY, Contact::CF_PRIMARY);
         xassert_eqq($lu_puma->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_mtnlion->cflags & Contact::CF_PRIMARY, 0);
         xassert_eqq($lu_cougar->primaryContactId, $lu_leopard->contactId);
         xassert_eqq($lu_leopard->primaryContactId, 0);
-        xassert_eqq($lu_mtnlion->primaryContactId, $lu_leopard->contactId);
+        xassert_eqq($lu_mtnlion->primaryContactId, 0);
         xassert_eqq($lu_puma->primaryContactId, $lu_leopard->contactId);
 
         (new ConfInvariants($this->conf))->check_users();

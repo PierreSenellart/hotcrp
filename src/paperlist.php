@@ -621,6 +621,10 @@ class PaperList {
         $origin = $origin ?? self::VIEWORIGIN_MAX;
         assert($origin >= self::VIEWORIGIN_REPORT && $origin <= self::VIEWORIGIN_MAX);
         assert(is_bool($v));
+        if (is_int($k)) {
+            error_log("{$k} is an int: " . debug_string_backtrace());
+            $k = (string) $k;
+        }
 
         if ($k !== "" && $k[0] === "\"" && $k[strlen($k) - 1] === "\"") {
             $k = substr($k, 1, -1);
@@ -813,7 +817,7 @@ class PaperList {
             if (($vf & 0xF) >= self::VIEWORIGIN_DEFAULT_DISPLAY
                 && ($vf & 0xF) <= self::VIEWORIGIN_SESSION
                 && ($vf & self::VIEW_SHOW) !== 0) {
-                $ignores[] = $name;
+                $ignores[] = (string) $name;
             }
         }
         foreach ($ignores as $name) {
@@ -847,7 +851,7 @@ class PaperList {
             }
             $pos = self::$view_fake[$name] ?? null;
             if ($pos === null) {
-                $fs = $this->conf->paper_columns($name, $this->xtp);
+                $fs = $this->conf->paper_columns((string) $name, $this->xtp);
                 if (count($fs) && isset($fs[0]->order)) {
                     $pos = $fs[0]->order;
                     $name = $fs[0]->name;
@@ -1306,10 +1310,9 @@ class PaperList {
     private function _expand_view_column($k) {
         if (!isset(self::$view_fake[$k])
             && ($this->_viewf[$k] ?? 0) >= self::VIEW_SHOW) {
-            return $this->ensure_columns_by_name($k);
-        } else {
-            return [];
+            return $this->ensure_columns_by_name((string) $k);
         }
+        return [];
     }
 
     /** @param string $name

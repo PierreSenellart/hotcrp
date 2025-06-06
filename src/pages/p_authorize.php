@@ -1,6 +1,10 @@
 <?php
 // pages/p_authorize.php -- HotCRP OAuth 2.0 authorization provider page
-// Copyright (c) 2022-2024 Eddie Kohler; see LICENSE.
+// Copyright (c) 2022-2025 Eddie Kohler; see LICENSE.
+
+namespace HotCRP;
+use Conf, ComponentSet, Contact, Ht, JsonResult, Qrequest, Redirection;
+use TokenInfo, Signin_Page;
 
 class OAuthClient {
     /** @var string */
@@ -181,7 +185,7 @@ class Authorize_Page {
         $buttons = [];
         $nav = $this->qreq->navigation();
         $top = "";
-        foreach (Contact::session_users($this->qreq) as $i => $email) {
+        foreach (Contact::session_emails($this->qreq) as $i => $email) {
             if ($email === "") {
                 continue;
             }
@@ -206,7 +210,8 @@ class Authorize_Page {
 
     private function handle_authconfirm() {
         if (!$this->qreq->code
-            || !($tok = TokenInfo::find_active($this->qreq->code, TokenInfo::OAUTHCODE, $this->conf))
+            || !($tok = TokenInfo::find($this->qreq->code, $this->conf))
+            || !$tok->is_active(TokenInfo::OAUTHCODE)
             || !($client = $this->find_client($tok->data("client_id")))) {
             $this->print_error_exit("<0>Invalid or expired authentication request");
         }
@@ -361,7 +366,8 @@ class Authorize_Page {
 
         // look up code
         if (!$this->qreq->code
-            || !($tok = TokenInfo::find_active($this->qreq->code, TokenInfo::OAUTHCODE, $this->conf))
+            || !($tok = TokenInfo::find($this->qreq->code, $this->conf))
+            || !$tok->is_active(TokenInfo::OAUTHCODE)
             || !$tok->data("id_token")
             || $tok->data("client_id") !== $this->qreq->client_id
             || $tok->data("redirect_uri") !== $this->qreq->redirect_uri) {

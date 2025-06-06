@@ -81,6 +81,7 @@ class PaperStatus extends MessageSet {
     const SSF_NEWSUBMIT = 32;
     const SSF_FINALSUBMIT = 64;
     const SSF_ADMIN_UPDATE = 128;
+    const SSF_PIDFAIL = 256;
 
     function __construct(Contact $user, $options = []) {
         $this->conf = $user->conf;
@@ -353,6 +354,7 @@ class PaperStatus extends MessageSet {
                 $filename = $docj->content_file;
             }
         }
+        $safe_filename = DocumentInfo::sanitize_filename($filename);
 
         // extract requested hash
         $ha = $want_algorithm = null;
@@ -422,20 +424,29 @@ class PaperStatus extends MessageSet {
         }
 
         // check for existing document
-        if (!$this->prow->is_new()
-            && isset($docj->docid)
+        $docid = -1;
+        if (isset($docj->docid)
             && is_int($docj->docid)
             && $docj->docid > 0) {
+            $docid = $docj->docid;
+        }
+        if (!$this->prow->is_new()
+            && ($docid > 0 || $hash !== null)) {
             $qx = [
                 "paperId=?" => $this->prow->paperId,
-                "documentType=?" => $o->id,
-                "paperStorageId=?" => $docj->docid
+                "documentType=?" => $o->id
             ];
+            if ($docid > 0) {
+                $qx["paperStorageId=?"] = $docj->docid;
+            }
             if ($hash !== null) {
                 $qx["sha1=?"] = $hash;
             }
             if ($mimetype !== null) {
                 $qx["mimetype=?"] = $mimetype;
+            }
+            if ($safe_filename !== null) {
+                $qx["filename=?"] = $safe_filename;
             }
             $result = $this->conf->qe_apply("select * from PaperStorage where " . join(" and ", array_keys($qx)), array_values($qx));
             $edoc = DocumentInfo::fetch($result, $this->conf, $this->prow);
@@ -465,8 +476,8 @@ class PaperStatus extends MessageSet {
         if (isset($docj->timestamp) && is_int($docj->timestamp)) {
             $doc->set_timestamp($docj->timestamp);
         }
-        if ($filename) {
-            $doc->set_filename(DocumentInfo::sanitize_filename($filename));
+        if ($safe_filename !== null) {
+            $doc->set_filename($safe_filename);
         }
         if ($content !== null) {
             $doc->set_simple_content($content);
@@ -749,7 +760,7 @@ class PaperStatus extends MessageSet {
      * @return list<string> */
     function changed_keys($full = false) {
         $s = [];
-        if ($full && ($this->_save_status & (self::SSF_SAVED | self::SSF_NEW)) === (self::SSF_SAVED | self::SSF_NEW)) {
+        if ($full && ($this->_save_status & (self::SSF_NEW | self::SSF_PIDFAIL)) === self::SSF_NEW) {
             $s[] = "pid";
         }
         foreach ($this->_fdiffs ?? [] as $field) {
@@ -973,12 +984,8 @@ class PaperStatus extends MessageSet {
         }
         if (!$uu && $ctype >= CONFLICT_AUTHOR) {
             $j = $au->unparse_nea_json();
-            $j["disablement"] = ($this->disable_users ? Contact::CF_UDISABLED : 0)
-                | ($ctype >= CONFLICT_CONTACTAUTHOR ? 0 : Contact::CF_PLACEHOLDER);
+            $j["disablement"] = Contact::CF_PLACEHOLDER;
             $uu = Contact::make_keyed($this->conf, $j)->store(0, $this->user);
-            if ($uu) {
-                $this->_created_contacts[] = $uu;
-            }
         }
         if (!$uu) {
             return null;
@@ -1160,6 +1167,7 @@ class PaperStatus extends MessageSet {
             $this->prow->set_prop("paperId", $this->conf->id_randomizer()->reserve(DatabaseIDRandomizer::PAPERID));
         } else if (!$this->user->privChair) {
             $this->user->no_paper_whynot($prow->paperId)->append_to($this, null, MessageSet::ESTOP);
+            $this->_save_status |= self::SSF_PIDFAIL;
             return false;
         }
         $this->prow->set_prop("title", "");
@@ -1168,7 +1176,6 @@ class PaperStatus extends MessageSet {
         foreach (Tagger::split_unpack($prow->all_tags_text()) as $tv) {
             $this->_tags_changed[] = $tv;
         }
-
         return true;
     }
 
@@ -1569,9 +1576,20 @@ class PaperStatus extends MessageSet {
                 continue;
             }
             $us[] = $u;
-            if (self::new_conflict_value($this->_conflict_values[$u->contactId]) >= CONFLICT_CONTACTAUTHOR
-                && $u->activate_placeholder(false)) {
-                $this->_created_contacts[] = $u;
+            $ncv = self::new_conflict_value($this->_conflict_values[$u->contactId]);
+            if ($u->is_placeholder() && $ncv >= CONFLICT_AUTHOR) {
+                if ($this->disable_users) {
+                    $u->set_prop("cflags", $u->cflags | Contact::CF_UDISABLED);
+                }
+                if ($ncv >= CONFLICT_CONTACTAUTHOR
+                    || (($cdbu = $u->cdb_user()) && !$cdbu->is_placeholder())) {
+                    $u->set_prop("cflags", $u->cflags & ~Contact::CF_PLACEHOLDER);
+                }
+                if ($u->prop_changed()) {
+                    $u->save_prop();
+                    $u->log_create($this->user);
+                    $this->_created_contacts[] = $u;
+                }
             }
             $this->conf->prefetch_cdb_user_by_email($u->email);
         }
@@ -1963,5 +1981,16 @@ class PaperStatus extends MessageSet {
     /** @return bool */
     function save_status_prepared() {
         return ($this->_save_status & self::SSF_PREPARED) !== 0;
+    }
+
+    /** @return ?int */
+    function saved_pid() {
+        if (($this->_save_status & self::SSF_SAVED) !== 0) {
+            return $this->paperId;
+        } else if ($this->prow->paperId !== 0
+                   && (!$this->prow->is_new() || $this->user->privChair)) {
+            return $this->prow->paperId;
+        }
+        return null;
     }
 }

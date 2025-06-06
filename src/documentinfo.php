@@ -265,7 +265,8 @@ class DocumentInfo implements JsonSerializable {
         if (!$token
             || !($toki = TokenInfo::find($token, $conf))
             || !$toki->is_active()
-            || $toki->capabilityType !== TokenInfo::UPLOAD) {
+            || $toki->capabilityType !== TokenInfo::UPLOAD
+            || !$toki->data("ready")) {
             return null;
         }
         return self::make_token($conf, $toki, null, $paperId, $documentType);
@@ -278,7 +279,7 @@ class DocumentInfo implements JsonSerializable {
     static function make_token(Conf $conf, TokenInfo $toki, $content_file = null,
                                $paperId = null, $documentType = null) {
         assert($toki->capabilityType === TokenInfo::UPLOAD);
-        $tokd = json_decode($toki->data);
+        $tokd = $toki->data();
         if (!$tokd->hash) {
             return null;
         }
@@ -293,7 +294,7 @@ class DocumentInfo implements JsonSerializable {
         if (ctype_xdigit($tokd->crc32) && strlen($tokd->crc32) === 8) {
             $doc->crc32 = hex2bin($tokd->crc32);
         }
-        if (isset($content_file)) {
+        if ($content_file !== null) {
             $doc->content_file = $content_file;
         } else if (isset($tokd->content_file) && file_exists($tokd->content_file)) {
             // file may have moved to permanent location
@@ -302,7 +303,7 @@ class DocumentInfo implements JsonSerializable {
         if ($doc->content_available() || $doc->load_docstore()) {
             $doc->analyze_content();
         }
-        $doc->_prefer_s3 = !!($tokd->s3_status ?? false);
+        $doc->_prefer_s3 = !!($tokd->s3_ready ?? false);
         return $doc;
     }
 
@@ -1175,9 +1176,8 @@ class DocumentInfo implements JsonSerializable {
             return $this->content;
         } else if (($path = $this->available_content_file()) !== null) {
             return @file_get_contents($path);
-        } else {
-            return false;
         }
+        return false;
     }
 
     /** @return ?string */
@@ -1186,9 +1186,8 @@ class DocumentInfo implements JsonSerializable {
             return $this->content_file;
         } else if ($this->filestore !== null && is_readable($this->filestore)) {
             return $this->filestore;
-        } else {
-            return null;
         }
+        return null;
     }
 
     /** @return ?string */

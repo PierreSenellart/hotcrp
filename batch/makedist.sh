@@ -1,4 +1,4 @@
-export VERSION=3.0.0
+export VERSION=3.1
 
 # check that schema.sql and updateschema.php agree on schema version
 updatenum=`grep 'settings.*allowPaperOption.*=\|update_schema_version' src/updateschema.php | tail -n 1 | sed 's/.*= *//;s/.*[(] *//;s/[;)].*//'`
@@ -63,6 +63,7 @@ help.php
 index.php
 log.php
 mail.php
+manageemail.php
 manualassign.php
 mergeaccounts.php
 newaccount.php
@@ -86,8 +87,14 @@ batch/assign.php
 batch/autoassign.php
 batch/backupdb.php
 batch/checkinvariants.php
+batch/cli/cli_paper.php
+batch/cli/cli_settings.php
+batch/cli/cli_test.php
+batch/cli/cli_upload.php
+batch/createdb.php
 batch/deletepapers.php
 batch/fixdelegation.php
+batch/hotcrapi.php
 batch/killinactivedoc.php
 batch/paperjson.php
 batch/reviewcsv.php
@@ -101,6 +108,18 @@ batch/settings.php
 batch/updatecontactdb.php
 
 conf/.htaccess
+
+devel/hotcrp-daemonize.c
+devel/manual/components.md
+devel/manual/css.md
+devel/manual/docstore.md
+devel/manual/fmt.md
+devel/manual/hotcrapi.md
+devel/manual/index.md
+devel/manual/oauth.md
+devel/manual/pages.md
+devel/manual/sessions.md
+devel/openapi.json
 
 etc/.htaccess
 etc/affiliationmatchers.json
@@ -167,6 +186,7 @@ lib/ldaplogin.php
 lib/login.php
 lib/mailer.php
 lib/mailpreparation.php
+lib/memoryqsession.php
 lib/messageset.php
 lib/mime.types
 lib/mimetext.php
@@ -187,10 +207,10 @@ lib/s3result.php
 lib/scoreinfo.php
 lib/subprocess.php
 lib/tagger.php
-lib/testqsession.php
 lib/text.php
 lib/uconvertershim.php
 lib/unicodehelper.php
+lib/utf8conversionfilter.php
 lib/xlsx.php
 
 src/.htaccess
@@ -212,6 +232,7 @@ src/api/api_paperpc.php
 src/api/api_preference.php
 src/api/api_requestreview.php
 src/api/api_review.php
+src/api/api_reviewmeta.php
 src/api/api_reviewtoken.php
 src/api/api_search.php
 src/api/api_searchconfig.php
@@ -238,6 +259,7 @@ src/assigners/a_taganno.php
 src/assigners/a_unsubmitreview.php
 src/assignmentcountset.php
 src/assignmentset.php
+src/authenticationchecker.php
 src/author.php
 src/authormatcher.php
 src/autoassigner.php
@@ -288,6 +310,7 @@ src/formulas/f_decision.php
 src/formulas/f_now.php
 src/formulas/f_optionpresent.php
 src/formulas/f_optionvalue.php
+src/formulas/f_pagecount.php
 src/formulas/f_pdfsize.php
 src/formulas/f_pref.php
 src/formulas/f_realnumberoption.php
@@ -347,7 +370,6 @@ src/mailsender.php
 src/meetingtracker.php
 src/mentionlister.php
 src/mentionparser.php
-src/mergecontacts.php
 src/multiconference.php
 src/notificationinfo.php
 src/options/o_abstract.php
@@ -385,7 +407,6 @@ src/pages/p_log.php
 src/pages/p_mail.php
 src/pages/p_manageemail.php
 src/pages/p_manualassign.php
-src/pages/p_mergeaccounts.php
 src/pages/p_oauth.php
 src/pages/p_offline.php
 src/pages/p_paper.php
@@ -504,6 +525,7 @@ src/settings/s_basics.php
 src/settings/s_comment.php
 src/settings/s_decision.php
 src/settings/s_decisionvisibility.php
+src/settings/s_fieldconversions.php
 src/settings/s_finalversions.php
 src/settings/s_json.php
 src/settings/s_messages.php
@@ -547,6 +569,7 @@ src/userinfo/u_developer.php
 src/userinfo/u_security.php
 src/usersecurityevent.php
 src/userstatus.php
+src/valueformat.php
 src/viewcommand.php
 src/viewoptionlist.php
 src/viewoptionschema.php

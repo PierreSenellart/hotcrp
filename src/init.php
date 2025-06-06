@@ -1,9 +1,9 @@
 <?php
 // init.php -- HotCRP initialization (test or site)
-// Copyright (c) 2006-2024 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 declare(strict_types=1);
-const HOTCRP_VERSION = "3.0.0";
+const HOTCRP_VERSION = "3.1";
 
 // All positive review types must be 1 digit
 const REVIEW_META = 5;
@@ -224,7 +224,7 @@ function initialize_request($conf, $nav) {
     header("Cache-Control: max-age=0,must-revalidate,private");
 
     // set up Content-Security-Policy if appropriate
-    $conf->prepare_security_headers();
+    $conf->prepare_security_headers($qreq);
 
     return $qreq;
 }
@@ -297,8 +297,8 @@ function initialize_user($qreq, $kwarg = null) {
         && preg_match('/\A\s*+Bearer\s++(hct_[A-Za-z0-9]++)\s*+\z/i', $htauth, $m)) {
         $qreq->approve_token(); // explicit authorization
         $user = null;
-        $token = TokenInfo::find($m[1], $conf, true)
-            ?? TokenInfo::find($m[1], $conf, false);
+        $token = TokenInfo::find_cdb($m[1], $conf)
+            ?? TokenInfo::find($m[1], $conf);
         if ($token
             && $token->capabilityType === TokenInfo::BEARER
             && $token->is_active()) {
@@ -308,9 +308,9 @@ function initialize_user($qreq, $kwarg = null) {
             JsonResult::make_error(401, "<0>Unauthorized")->complete();
         }
         $qreq->set_user($user);
+        $qreq->set_qsession(new MemoryQsession($m[1], ["u" => $user->email]));
         $user->set_bearer_authorized();
         Contact::set_main_user($user);
-        Contact::$session_users = [$user->email];
         $ucounter = ContactCounter::find_by_uid($conf, $token->is_cdb, $token->contactId);
         $ucounter->api_refresh();
         $ucounter->api_account(true);
@@ -340,7 +340,7 @@ function initialize_user($qreq, $kwarg = null) {
     $qreq->qsession()->maybe_open();
 
     // determine desired account
-    $us = Contact::session_users($qreq);
+    $us = Contact::session_emails($qreq);
     $nus = count($us);
     $uindex = 0;
     $reqemail = $_GET["i"] ?? "";
@@ -415,14 +415,6 @@ function initialize_user($qreq, $kwarg = null) {
         && $muser->has_author_view_capability()
         && !$conf->opt("allowIndexPapers")) {
         header("X-Robots-Tag: noindex, noarchive");
-    }
-
-    // redirect if disabled
-    if ($muser->is_disabled()) {
-        $gj = $conf->page_components($muser, $qreq)->get($nav->page);
-        if (!$gj || !($gj->allow_disabled ?? false)) {
-            $conf->redirect_hoturl("index");
-        }
     }
 
     // if bounced through login, add post data

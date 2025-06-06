@@ -1,12 +1,15 @@
 <?php
 // ht.php -- HotCRP HTML helper functions
-// Copyright (c) 2006-2024 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 class Ht {
     /** @var string */
     public static $img_base = "";
     /** @var string */
     private static $_script_open = "<script";
+    /** @var ?non-empty-string
+     * @readonly */
+    public static $script_nonce;
     /** @var int */
     private static $_controlid = 0;
     /** @var int */
@@ -86,11 +89,14 @@ class Ht {
         return $x;
     }
 
-    /** @param ?string $nonce */
+    /** @param ?string $nonce
+     * @suppress PhanAccessReadOnlyProperty */
     static function set_script_nonce($nonce) {
-        if ($nonce === null || $nonce === "") {
+        if ((string) $nonce === "") {
+            self::$script_nonce = null;
             self::$_script_open = '<script';
         } else {
+            self::$script_nonce = $nonce;
             self::$_script_open = '<script nonce="' . htmlspecialchars($nonce) . '"';
         }
     }
@@ -209,7 +215,7 @@ class Ht {
             }
 
             if ($info === null) {
-                $opts[] = '<option label=" " disabled></option>';
+                $opts[] = '<hr>';
                 continue;
             }
             if (($info["exclude"] ?? false)
@@ -734,15 +740,33 @@ class Ht {
         $mlx = MessageSet::make_list(...$mls);
         if (($h = MessageSet::feedback_html($mlx)) !== "") {
             return [$h, MessageSet::list_status($mlx)];
-        } else {
-            return ["", 0];
         }
+        return ["", 0];
+    }
+
+    /** @param Fmt|Conf $fmt
+     * @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
+     * @return array{string,int} */
+    static function fmt_feedback_msg_content($fmt, ...$mls) {
+        $mlx = MessageSet::fmt_list($fmt, ...$mls);
+        if (($h = MessageSet::feedback_html($mlx)) !== "") {
+            return [$h, MessageSet::list_status($mlx)];
+        }
+        return ["", 0];
     }
 
     /** @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
      * @return string */
     static function feedback_msg(...$mls) {
         $ms = self::feedback_msg_content(...$mls);
+        return $ms[0] === "" ? "" : self::msg($ms[0], $ms[1]);
+    }
+
+    /** @param Fmt|Conf $fmt
+     * @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
+     * @return string */
+    static function fmt_feedback_msg($fmt, ...$mls) {
+        $ms = self::fmt_feedback_msg_content($fmt, ...$mls);
         return $ms[0] === "" ? "" : self::msg($ms[0], $ms[1]);
     }
 }

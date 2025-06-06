@@ -60,13 +60,13 @@ class User_API {
         }
 
         if (!$found) {
-            return new JsonResult(["ok" => true, "found" => false]);
+            return new JsonResult(["ok" => true, "match" => false]);
         }
 
         $ok = strcasecmp($found->email, $email) === 0;
         $rj = [
-            "ok" => $ok,
-            "found" => true,
+            "ok" => true,
+            "match" => $ok,
             "email" => $found->email,
             "given_name" => $found->firstName,
             "family_name" => $found->lastName,
@@ -80,7 +80,7 @@ class User_API {
         }
         if ($prow
             && $user->allow_view_authors($prow)
-            && $qreq->potential_conflict
+            && friendly_boolean($qreq->potential_conflict)
             && ($potconf = $prow->potential_conflict_html($found))) {
             $rj["potential_conflict"] = PaperInfo::potential_conflict_tooltip_html($potconf);
         }
@@ -131,7 +131,7 @@ class User_API {
         if (!$viewer->privChair) {
             return JsonResult::make_permission_error();
         }
-        $user->activate_placeholder(false);
+        $user->activate_placeholder(false, $viewer);
         $prep = $user->prepare_mail("@accountinfo");
         if (!$prep->send()) {
             return new JsonResult(["ok" => false, "message_list" => $prep->message_list()]);

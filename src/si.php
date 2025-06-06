@@ -29,6 +29,9 @@ class Si {
     private $_tclass;
     /** @var ?list<string> */
     private $tags;
+    /** @var ?list<string>
+     * @readonly */
+    public $member_tags;
     /** @var string
      * @readonly */
     private $title;
@@ -60,6 +63,9 @@ class Si {
     /** @var bool
      * @readonly */
     public $internal = false;
+    /** @var bool
+     * @readonly */
+    public $id_member = false;
     /** @var int
      * @readonly */
     public $storage_type;
@@ -111,6 +117,7 @@ class Si {
     static private $key_storage = [
         "autogrow" => "is_bool",
         "description" => "is_string",
+        "id_member" => "is_bool",
         "internal" => "is_bool",
         "json_values" => "Si::is_auto_or_list",
         "order" => "is_number",
@@ -123,7 +130,6 @@ class Si {
         "size" => "is_int",
         "subtype" => "is_string",
         "summary" => "is_string",
-        "tags" => "is_string_list",
         "title" => "is_string",
         "title_pattern" => "is_string",
         "type" => "is_string",
@@ -162,6 +168,24 @@ class Si {
         foreach ((array) $j as $k => $v) {
             if (isset(self::$key_storage[$k])) {
                 $this->store($k, $j, $k, self::$key_storage[$k]);
+            }
+        }
+        if (isset($j->tags)) {
+            if (is_string($j->tags)) {
+                $this->tags = preg_split('/\s+/', trim($j->tags));
+            } else if (isset($j->tags) && is_string_list($j->tags)) {
+                $this->tags = $j->tags;
+            } else {
+                trigger_error("setting {$j->name}.tags format error");
+            }
+        }
+        if (isset($j->member_tags)) {
+            if (is_string($j->member_tags)) {
+                $this->member_tags = preg_split('/\s+/', trim($j->member_tags));
+            } else if (isset($j->member_tags) && is_string_list($j->member_tags)) {
+                $this->member_tags = $j->member_tags;
+            } else {
+                trigger_error("setting {$j->name}.member_tags format error");
             }
         }
         if (isset($j->configurable) && is_bool($j->configurable)) {
@@ -363,18 +387,16 @@ class Si {
             && ($this->storage_type === self::SI_MEMBER || $this->storage_type === self::SI_NONE)
             && str_starts_with($title, "/")) {
             return ltrim(substr($title, 1));
-        } else {
-            return $title;
         }
+        return $title;
     }
 
     /** @return ?string */
     function title_html(?SettingValues $sv = null) {
         if (($t = $this->title($sv))) {
             return htmlspecialchars($t);
-        } else {
-            return null;
         }
+        return null;
     }
 
     /** @param string $subtype
@@ -429,24 +451,49 @@ class Si {
         if ($this->storage === null) {
             if ($this->storage_type === self::SI_MEMBER) {
                 return substr($this->name2, 1);
-            } else {
-                return $this->name;
             }
+            return $this->name;
         } else if ($this->name_parts === null) {
             return $this->storage;
+        }
+        return $this->_expand_pattern($this->storage, null);
+    }
+
+    private function resolve_tags() {
+        $n = $this->name0;
+        if (str_ends_with($n, "/")) {
+            $n = substr($n, 0, -1);
+        }
+        if (($psi = $this->conf->si($n))) {
+            if ($psi->tags === null
+                && $psi->name_parts !== null) {
+                $psi->resolve_tags();
+            }
+            $this->tags = $psi->tags ?? [];
         } else {
-            return $this->_expand_pattern($this->storage, null);
+            $this->tags = [];
         }
     }
 
     /** @param SearchExpr $expr
+     * @param bool $member_tags
      * @return bool */
-    function expr_matches($expr) {
+    function expr_matches($expr, $member_tags = false) {
         if ($expr->kword) {
             return false;
         }
         if (str_starts_with($expr->text, "#")) {
-            return $this->tags !== null && in_array(substr($expr->text, 1), $this->tags);
+            if ($this->tags === null
+                && $this->name_parts !== null) {
+                $this->resolve_tags();
+            }
+            $t = $member_tags ? $this->member_tags : $this->tags;
+            return $t !== null
+                && in_array(substr($expr->text, 1), $t);
+        }
+        if ($expr->text === "id") {
+            return $this->name_parts !== null
+                && $this->name2 === "/id";
         }
         $f = str_replace("\\*", ".*", preg_quote($expr->text, "/"));
         if (!str_starts_with($f, ".*")) {

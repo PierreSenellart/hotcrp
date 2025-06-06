@@ -318,7 +318,7 @@ class Autoassign_Page {
           <dt>', review_type_icon(REVIEW_META), ' Metareview</dt><dd>Can view all other reviews before completing their own</dd></dl>
         </div></div>', "\n";
         echo Ht::unstash_script("\$(\"#autoassignform\").awaken()"),
-            Ht::feedback_msg($this->ms);
+            Ht::fmt_feedback_msg($this->conf, $this->ms);
 
 
         // paper selection
@@ -518,7 +518,7 @@ class Autoassign_Page {
         $this->jobid = $tok->salt;
         assert($this->jobid !== null);
 
-        $s = Job_Capability::run_live($tok, $this->qreq, [$this, "redirect_uri"]);
+        $s = $tok->run_live($this->qreq, [$this, "redirect_uri"]);
 
         // Autoassign_Batch has completed its work.
         if ($s === "forked") {
@@ -550,32 +550,31 @@ class Autoassign_Page {
     }
 
 
+    /** @return never */
     function run_try_job() {
-        try {
-            $tok = Job_Capability::find($this->conf, $this->qreq->job, "Autoassign", true);
-        } catch (CommandLineException $ex) {
-            $tok = null;
-        }
-        if ($tok && $tok->is_active()) {
+        $tok = Job_Capability::find($this->qreq->job, $this->conf);
+        if ($tok
+            && $tok->is_batch_class("Autoassign")
+            && $tok->is_active()) {
             $this->run_job($tok);
-        } else {
-            http_response_code($tok ? 409 : 404);
-            $this->qreq->print_header("Assignments", "autoassign", [
-                "subtitle" => "Automatic",
-                "body_class" => "paper-error"
-            ]);
-            if ($tok) {
-                $m = "This assignment has already been committed.";
-            } else {
-                $m = "Expired or nonexistent autoassignment job.";
-            }
-            $this->conf->error_msg("<5>{$m} <a href=\"" . $this->conf->selfurl($this->qreq, ["a" => $this->qreq->a]) . "\">Try again</a>");
-            $this->qreq->print_footer();
-            exit(0);
         }
+        http_response_code($tok ? 409 : 404);
+        $this->qreq->print_header("Assignments", "autoassign", [
+            "subtitle" => "Automatic",
+            "body_class" => "paper-error"
+        ]);
+        if ($tok && $tok->is_batch_class("Autoassign")) {
+            $m = "This assignment has already been committed.";
+        } else {
+            $m = "Expired or nonexistent autoassignment job.";
+        }
+        $this->conf->error_msg("<5>{$m} <a href=\"" . $this->conf->selfurl($this->qreq, ["a" => $this->qreq->a]) . "\">Try again</a>");
+        $this->qreq->print_footer();
+        exit(0);
     }
 
-    function run_job(TokenInfo $tok) {
+    /** @return never */
+    function run_job(Job_Capability $tok) {
         $qreq = $this->qreq;
         $this->jobid = $tok->salt;
 
@@ -633,20 +632,21 @@ class Autoassign_Page {
         exit(0);
     }
 
+    /** @return never */
     private function handle_in_progress(TokenInfo $tok) {
         if ($tok->timeUsed < Conf::$now - 40) {
             $this->jobid = null;
             $this->ms->error_at(null, "<5><strong>Assignment failure</strong>");
             $this->ms->inform_at(null, "<0>The autoassigner appears to have failed. This can happen if it runs out of memory or times out. You may want to retry, or to change the assignment parameters; for example, consider assigning a subset of submissions first.");
             echo '<h3 class="form-h">Preparing assignment</h3>',
-                Ht::feedback_msg($this->ms),
+                Ht::fmt_feedback_msg($this->conf, $this->ms),
                 '<div class="aab aabig btnp">',
                 Ht::link("Revise assignment", $this->conf->selfurl($this->qreq, $this->qreq_parameters()), ["class" => "btn btn-primary"]),
                 '</div>';
         } else {
             echo '<div id="propass" class="propass">',
                 '<h3 class="form-h">Preparing assignment</h3>';
-            echo Ht::feedback_msg($this->ms);
+            echo Ht::fmt_feedback_msg($this->conf, $this->ms);
             if (($s = $tok->data("progress"))) {
                 echo '<p class="is-job-progress"><strong>Status:</strong> ', htmlspecialchars($s), '</p>';
             }
@@ -657,11 +657,12 @@ class Autoassign_Page {
         exit(0);
     }
 
+    /** @return never */
     private function handle_empty_assignment(TokenInfo $tok) {
         $this->ms->inform_at(null, "<0>Your assignment parameters are already satisfied, or I was unable to make any assignments given your constraints. You may want to check the parameters and try again.");
         $this->jobid = null;
         echo '<h3 class="form-h">Proposed assignment</h3>',
-            Ht::feedback_msg($this->ms),
+            Ht::fmt_feedback_msg($this->conf, $this->ms),
             '<div class="aab aabig btnp">',
             Ht::link("Revise assignment", $this->conf->selfurl($this->qreq, $this->qreq_parameters()), ["class" => "btn btn-primary"]),
             '</div>';
@@ -669,6 +670,7 @@ class Autoassign_Page {
         exit(0);
     }
 
+    /** @return never */
     private function handle_download_assignment(TokenInfo $tok) {
         $aset = new AssignmentSet($this->user);
         $aset->set_override_conflicts(true);
@@ -680,6 +682,7 @@ class Autoassign_Page {
         exit(0);
     }
 
+    /** @return never */
     private function handle_execute(TokenInfo $tok) {
         $tok->set_invalid()->update();
         $aset = new AssignmentSet($this->user);
@@ -709,7 +712,7 @@ class Autoassign_Page {
 
         $atype = $aset->type_description();
         echo '<h3 class="form-h">Proposed ', $atype ? "{$atype} " : "", 'assignment</h3>';
-        echo Ht::feedback_msg($this->ms);
+        echo Ht::fmt_feedback_msg($this->conf, $this->ms);
         $aset->feedback_msg(AssignmentSet::FEEDBACK_ASSIGN);
         $this->conf->feedback_msg(
             MessageItem::marked_note("<0>Select “Apply changes” to make the checked assignments."),

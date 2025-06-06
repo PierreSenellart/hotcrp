@@ -148,7 +148,7 @@ class Multiconference {
         if ($maintenance) {
             $status = 503;
             $title = "Maintenance";
-            $mis = [Messageitem::error(Ftext::concat("<0>The site is down for maintenance. ", is_string($maintenance) ? $maintenance : "<0>Please check back later."))];
+            $mis = [MessageItem::error(Ftext::concat("<0>The site is down for maintenance. ", is_string($maintenance) ? $maintenance : "<0>Please check back later."))];
             $link = false;
             $fr = null;
         }
@@ -231,9 +231,9 @@ class Multiconference {
     /** @return string */
     static private function nonexistence_error() {
         if (PHP_SAPI === "cli") {
-            return "Conference not specified. Use `-n CONFID` to specify a conference.";
+            return "Conference ID missing, `-n CONFID` required";
         } else {
-            return "Conference not specified.";
+            return "Conference not found";
         }
     }
 

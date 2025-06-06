@@ -192,7 +192,7 @@ class Settings_Tester {
             "topic": [{"id": 1, "name": "Berf"}], "reset": true
         }');
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["topics"]);
+        xassert_eqq($sv->saved_keys(), ["topics"]);
         xassert_eqq(json_encode_db($this->conf->topic_set()->as_array()), '{"1":"Berf"}');
 
         $sv = (new SettingValues($this->u_chair))->add_json_string('{
@@ -594,7 +594,7 @@ class Settings_Tester {
         xassert(!$this->conf->find_review_field("B5"));
     }
 
-    function test_review_name_required() {
+    function test_rf_name_required() {
         $sv = SettingValues::make_request($this->u_chair, [
             "has_rf" => 1,
             "rf/1/id" => "s90",
@@ -604,7 +604,7 @@ class Settings_Tester {
         xassert_str_contains($sv->full_feedback_text(), "Entry required");
     }
 
-    function test_review_renumber_choices() {
+    function test_rf_renumber_choices() {
         $sv = SettingValues::make_request($this->u_chair, [
             "has_rf" => 1,
             "rf/1/id" => "s05",
@@ -615,7 +615,7 @@ class Settings_Tester {
             "rf/2/values_text" => "A. A\nB. B\nC. C"
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["review_form"]);
+        xassert_eqq($sv->saved_keys(), ["review_form"]);
 
         xassert_eqq($sv->conf->fetch_ivalue("select reviewId from PaperReview where paperId=30 limit 1"), null);
 
@@ -756,7 +756,7 @@ class Settings_Tester {
         $this->conf->qe("delete from PaperReview where paperId=30");
     }
 
-    function test_review_conditions() {
+    function test_rf_conditions() {
         $sv = SettingValues::make_request($this->u_chair, [
             "has_rf" => 1,
             "rf/1/id" => "s05",
@@ -837,7 +837,7 @@ class Settings_Tester {
         xassert($sv->execute());
     }
 
-    function test_review_field_id_new() {
+    function test_rf_id_new() {
         $rfkeys = array_keys($this->conf->all_review_fields());
 
         $sv = SettingValues::make_request($this->u_chair, [
@@ -872,6 +872,95 @@ class Settings_Tester {
             "rf/1/delete" => 1
         ]);
         xassert($sv->execute());
+    }
+
+    function test_rf_checkbox() {
+        $sv = SettingValues::make_request($this->u_chair, [
+            "has_rf" => 1,
+            "rf/1/name" => "Goodness",
+            "rf/1/id" => "new",
+            "rf/1/type" => "checkbox"
+        ]);
+        xassert($sv->execute());
+
+        $rf = $this->conf->find_review_field("Goodness");
+        xassert(!!$rf);
+        xassert_eqq($rf->short_id[0], "s");
+        xassert_eqq($rf->type, "checkbox");
+
+        $this->conf->save_refresh_setting("rev_open", 1);
+        save_review(30, $this->u_mgbaker, [
+            "ovemer" => 2, "revexp" => 1, "goodness" => "yes"
+        ]);
+        $u_jj = $this->conf->checked_user_by_email("jj@cse.ucsc.edu");
+        save_review(30, $u_jj, [
+            "ovemer" => 2, "revexp" => 1, "goodness" => "no"
+        ]);
+        $u_floyd = $this->conf->checked_user_by_email("floyd@ee.lbl.gov");
+        save_review(30, $u_floyd, [
+            "ovemer" => 2, "revexp" => 1, "goodness" => "yes"
+        ]);
+        $u_leita = $this->conf->ensure_user_by_email("leita@library.berkeleyca.gov");
+        $this->u_chair->assign_review(30, $u_leita, REVIEW_EXTERNAL);
+        save_review(30, $u_leita, [
+            "ovemer" => 2, "revexp" => 1, "goodness" => ""
+        ]);
+
+        $p30 = $this->conf->checked_paper_by_id(30);
+        $rrow1 = $p30->review_by_user($this->u_mgbaker);
+        $rrow2 = $p30->review_by_user($u_jj);
+        $rrow3 = $p30->review_by_user($u_floyd);
+        $rrow4 = $p30->review_by_user($u_leita);
+        xassert_eqq($rrow1->fidval($rf->short_id), 1);
+        xassert_eqq($rrow2->fidval($rf->short_id), 0);
+        xassert_eqq($rrow3->fidval($rf->short_id), 1);
+        xassert_eqq($rrow4->fidval($rf->short_id), null);
+
+        // change field to dropdown
+        $sv = SettingValues::make_request($this->u_chair, [
+            "has_rf" => 1,
+            "rf/1/id" => $rf->short_id,
+            "rf/1/type" => "dropdown"
+        ]);
+        xassert($sv->execute());
+
+        $rf = $this->conf->review_field($rf->short_id);
+        '@phan-var-force DiscreteValues_ReviewField $rf';
+        xassert(!!$rf);
+        xassert_eqq($rf->type, "dropdown");
+        xassert_eqq($rf->values(), ["No", "Yes"]);
+
+        $p30 = $this->conf->checked_paper_by_id(30);
+        $rrow1 = $p30->review_by_user($this->u_mgbaker);
+        $rrow2 = $p30->review_by_user($u_jj);
+        $rrow3 = $p30->review_by_user($u_floyd);
+        $rrow4 = $p30->review_by_user($u_leita);
+        xassert_eqq($rrow1->fidval($rf->short_id), 2);
+        xassert_eqq($rrow2->fidval($rf->short_id), 1);
+        xassert_eqq($rrow3->fidval($rf->short_id), 2);
+        xassert_eqq($rrow4->fidval($rf->short_id), null);
+
+        // change field back to checkbox
+        $sv = SettingValues::make_request($this->u_chair, [
+            "has_rf" => 1,
+            "rf/1/id" => $rf->short_id,
+            "rf/1/type" => "checkbox"
+        ]);
+        xassert($sv->execute());
+
+        $rf = $this->conf->review_field($rf->short_id);
+        xassert(!!$rf);
+        xassert_eqq($rf->type, "checkbox");
+
+        $p30 = $this->conf->checked_paper_by_id(30);
+        $rrow1 = $p30->review_by_user($this->u_mgbaker);
+        $rrow2 = $p30->review_by_user($u_jj);
+        $rrow3 = $p30->review_by_user($u_floyd);
+        $rrow4 = $p30->review_by_user($u_leita);
+        xassert_eqq($rrow1->fidval($rf->short_id), 1);
+        xassert_eqq($rrow2->fidval($rf->short_id), 0);
+        xassert_eqq($rrow3->fidval($rf->short_id), 1);
+        xassert_eqq($rrow4->fidval($rf->short_id), null);
     }
 
     function test_review_rounds() {
@@ -960,7 +1049,7 @@ class Settings_Tester {
             "response/1/wordlimit" => "0"
         ]);
         xassert($sv->execute());
-        xassert_array_eqq($sv->changed_keys(), ["responses"]);
+        xassert_array_eqq($sv->saved_keys(), ["responses"]);
 
         $rrds = $this->conf->response_round_list();
         xassert_eqq(count($rrds), 1);
@@ -991,7 +1080,7 @@ class Settings_Tester {
             "response/1/done" => "@" . ($t0 + 10001)
         ]);
         xassert($sv->execute());
-        xassert_array_eqq($sv->changed_keys(), []);
+        xassert_array_eqq($sv->saved_keys(), []);
         $rrd = $this->conf->response_round_by_id(1);
         xassert_eqq($rrd->name, "Butt");
         xassert_eqq($rrd->open, $t0);
@@ -1007,7 +1096,7 @@ class Settings_Tester {
             "response/1/wordlimit" => "0"
         ]);
         xassert($sv->execute());
-        xassert_array_eqq($sv->changed_keys(), ["responses"]);
+        xassert_array_eqq($sv->saved_keys(), ["responses"]);
 
         $rrds = $this->conf->response_round_list();
         xassert_eqq(count($rrds), 2);
@@ -1034,7 +1123,7 @@ class Settings_Tester {
             "response/2/name" => "unnamed"
         ]);
         xassert($sv->execute());
-        xassert_array_eqq($sv->changed_keys(), ["responses"]);
+        xassert_array_eqq($sv->saved_keys(), ["responses"]);
 
         $rrds = $this->conf->response_round_list();
         xassert_eqq(count($rrds), 2);
@@ -1066,7 +1155,7 @@ class Settings_Tester {
             "response/2/instructions" => $definstrux
         ]);
         xassert($sv->execute());
-        xassert_array_eqq($sv->changed_keys(), ["responses"]);
+        xassert_array_eqq($sv->saved_keys(), ["responses"]);
 
         $rrds = $this->conf->response_round_list();
         xassert_eqq($rrds[0]->instructions, "PANTS");
@@ -1080,7 +1169,7 @@ class Settings_Tester {
             "response/1/instructions" => $definstrux
         ]);
         xassert($sv->execute());
-        xassert_array_eqq($sv->changed_keys(), ["responses"]);
+        xassert_array_eqq($sv->saved_keys(), ["responses"]);
 
         $rrds = $this->conf->response_round_list();
         xassert_eqq($rrds[0]->instructions, null);
@@ -1308,13 +1397,13 @@ class Settings_Tester {
 
         $x = call_api("=settings", $this->u_chair, ["settings" => "{\"review_blind\":\"open\"}"]);
         xassert($x->ok);
-        xassert_eqq($x->change_list, ["rev_blind"]);
+        xassert_eqq($x->change_list, ["review_blind"]);
         xassert_eqq($x->settings->review_blind, "open");
         xassert_eqq($this->conf->fetch_ivalue("select value from Settings where name='rev_blind'"), 0);
 
         $x = call_api("=settings", $this->u_chair, ["settings" => "{\"review_blind\":\"blind\"}"]);
         xassert($x->ok);
-        xassert_eqq($x->change_list, ["rev_blind"]);
+        xassert_eqq($x->change_list, ["review_blind"]);
         xassert_eqq($x->settings->review_blind, "blind");
         xassert_eqq($this->conf->fetch_ivalue("select value from Settings where name='rev_blind'"), null);
 
@@ -1331,7 +1420,7 @@ class Settings_Tester {
             "submission_terms" => ""
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), []);
+        xassert_eqq($sv->saved_keys(), []);
         xassert_eqq($this->conf->opt("clickthrough_submit"), null);
         xassert_eqq($this->conf->_i("clickthrough_submit"), null);
 
@@ -1339,7 +1428,7 @@ class Settings_Tester {
             "submission_terms" => "xxx"
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["opt.clickthrough_submit", "msg.clickthrough_submit"]);
+        xassert_eqq($sv->saved_keys(), ["opt.clickthrough_submit", "msg.clickthrough_submit"]);
         xassert_neqq($this->conf->opt("clickthrough_submit"), null);
         xassert_eqq($this->conf->_i("clickthrough_submit"), "xxx");
 
@@ -1347,7 +1436,7 @@ class Settings_Tester {
             "submission_terms" => "xxx"
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), []);
+        xassert_eqq($sv->saved_keys(), []);
         xassert_neqq($this->conf->opt("clickthrough_submit"), null);
         xassert_eqq($this->conf->_i("clickthrough_submit"), "xxx");
 
@@ -1355,7 +1444,7 @@ class Settings_Tester {
             "submission_terms" => ""
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["opt.clickthrough_submit", "msg.clickthrough_submit"]);
+        xassert_eqq($sv->saved_keys(), ["opt.clickthrough_submit", "msg.clickthrough_submit"]);
         xassert_eqq($this->conf->opt("clickthrough_submit"), null);
         xassert_eqq($this->conf->_i("clickthrough_submit"), null);
     }
@@ -1772,7 +1861,7 @@ class Settings_Tester {
             "sf/1/type" => "numeric"
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["options"]);
+        xassert_eqq($sv->saved_keys(), ["options"]);
         xassert_search($this->u_chair, "has:fudge", "1 2 3 4 5");
         xassert_search($this->u_mgbaker, "has:fudge", "1 2 3 4 5");
 
@@ -1800,7 +1889,7 @@ class Settings_Tester {
             "sf/2/order" => 101
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["options"]);
+        xassert_eqq($sv->saved_keys(), ["options"]);
         xassert_search($this->u_mgbaker, "has:fudge", "");
 
         // new field
@@ -1812,7 +1901,7 @@ class Settings_Tester {
             "sf/1/type" => "numeric"
         ]);
         xassert($sv->execute());
-        xassert_eqq($sv->changed_keys(), ["options"]);
+        xassert_eqq($sv->saved_keys(), ["options"]);
         xassert_search($this->u_mgbaker, "has:brownies", "");
 
         // `order` is obeyed
@@ -1846,6 +1935,30 @@ class Settings_Tester {
         xassert(!$sv->execute());
         xassert_str_contains($sv->full_feedback_text(), "Entry required");
         xassert($sv->has_error_at("sf/1/name"));
+    }
+
+    function test_sf_realnumber_conversion() {
+        $brownies = $this->conf->options()->find("Brownies");
+        xassert(!!$brownies);
+        $this->conf->qe("insert into PaperOption (paperId, optionId, value) values (1, ?, 1), (2, ?, 4), (3, ?, 9), (4, ?, 16) on duplicate key update paperId=paperId",
+            $brownies->id, $brownies->id, $brownies->id, $brownies->id);
+
+        $sv = SettingValues::make_request($this->u_chair, [
+            "has_sf" => 1,
+            "sf/1/id" => $brownies->id,
+            "sf/1/type" => "realnumber"
+        ]);
+        xassert($sv->execute());
+
+        $result = $this->conf->qe("select * from PaperOption where optionId=? order by paperId asc", $brownies->id);
+        $n = 0;
+        while (($row = $result->fetch_object())) {
+            xassert_eq($row->paperId * $row->paperId, $row->value);
+            xassert_eq($row->paperId * $row->paperId, $row->data);
+            ++$n;
+        }
+        xassert_eqq($n, 4);
+        $result->close();
     }
 
     function test_ioptions_title() {

@@ -379,7 +379,8 @@ class ReviewInfo implements JsonSerializable {
         }
     }
 
-    /** @param PaperInfo|PaperInfoSet|null $prowx
+    /** @param Dbl_Result $result
+     * @param PaperInfo|PaperInfoSet|null $prowx
      * @return ?ReviewInfo */
     static function fetch($result, $prowx = null, ?Conf $conf = null) {
         $rrow = $result ? $result->fetch_object("ReviewInfo") : null;
@@ -761,10 +762,9 @@ class ReviewInfo implements JsonSerializable {
         if ($finfo->main_storage) {
             $v = intval($this->{$finfo->main_storage} ?? "0");
             return $v > 0 ? $v : ($v < 0 ? 0 : null);
-        } else {
-            $a = &$this->_fstorage($finfo->is_sfield);
-            return $a[$finfo->json_storage] ?? null;
         }
+        $a = &$this->_fstorage($finfo->is_sfield);
+        return $a[$finfo->json_storage] ?? null;
     }
 
     /** @param ReviewField|ReviewFieldInfo $finfo
@@ -1300,6 +1300,37 @@ class ReviewInfo implements JsonSerializable {
         ];
         $qv = array_map(function ($k) { return $this->$k; }, $qf);
         return $this->conf->qe("insert into PaperReview (" . join(", ", $qf) . ") values ?v", [$qv]);
+    }
+
+    /** @return bool */
+    function delete(Contact $actor, $opts = []) {
+        if ($this->reviewId <= 0) {
+            return false;
+        }
+        $result = $this->conf->qe("delete from PaperReview where paperId=? and reviewId=?",
+            $this->paperId, $this->reviewId);
+        if (!$result->affected_rows) {
+            return false;
+        }
+        $actor->log_activity_for($this->contactId, "Review {$this->reviewId} deleted", $this->paperId);
+        $this->conf->qe("delete from ReviewRating where paperId=? and reviewId=?",
+            $this->paperId, $this->reviewId);
+        // update global settings
+        if ($this->reviewToken !== 0) {
+            $this->conf->update_rev_tokens_setting(-1);
+        }
+        if ($this->reviewType === REVIEW_META) {
+            $this->conf->update_metareviews_setting(-1);
+        }
+        // perhaps a delegator needs to redelegate
+        if ($this->reviewType < REVIEW_SECONDARY && $this->requestedBy > 0) {
+            $this->conf->update_review_delegation($this->paperId, $this->requestedBy, -1);
+        }
+        // run autosearch
+        if (!($opts["no_autosearch"] ?? false)) {
+            $this->conf->update_automatic_tags($this->prow, "review");
+        }
+        return true;
     }
 
     /** @param ReviewInfo $a

@@ -237,6 +237,27 @@ class ConfInvariants {
         return $this;
     }
 
+    /** @param 1|3 $rtype
+     * @return string */
+    static function reviewNeedsSubmit_query($rtype) {
+        if ($rtype === REVIEW_SECONDARY) {
+            return "select r.paperId, r.reviewId, r.contactId, r.reviewNeedsSubmit
+                from PaperReview r
+                left join (select paperId, requestedBy, count(reviewId) ct, count(reviewSubmitted) cs
+                       from PaperReview
+                       where reviewType>0 and reviewType<" . REVIEW_SECONDARY . "
+                       group by paperId, requestedBy) q
+                    on (q.paperId=r.paperId and q.requestedBy=r.contactId)
+                where r.reviewType=" . REVIEW_SECONDARY . "
+                and reviewSubmitted is null
+                and if(coalesce(q.ct,0)=0,1,if(q.cs=0,-1,0))!=r.reviewNeedsSubmit";
+        }
+        return "select r.paperId, r.reviewId, r.contactId, r.reviewNeedsSubmit
+            from PaperReview r
+            where reviewType>0 and reviewType!=" . REVIEW_SECONDARY . "
+            and if(reviewSubmitted or (reviewType=" . REVIEW_EXTERNAL . " and timeApprovalRequested<0),0,1)!=r.reviewNeedsSubmit";
+    }
+
     /** @return $this */
     function check_reviews() {
         // reviewType is defined correctly
@@ -265,17 +286,16 @@ class ConfInvariants {
             }
         }
 
-        // reviewNeedsSubmit is defined correctly
-        $any = $this->invariantq("select r.paperId, r.reviewId from PaperReview r
-            left join (select paperId, requestedBy, count(reviewId) ct, count(reviewSubmitted) cs
-                       from PaperReview where reviewType>0 and reviewType<" . REVIEW_SECONDARY . "
-                       group by paperId, requestedBy) q
-                on (q.paperId=r.paperId and q.requestedBy=r.contactId)
-            where r.reviewType=" . REVIEW_SECONDARY . " and reviewSubmitted is null
-            and if(coalesce(q.ct,0)=0,1,if(q.cs=0,-1,0))!=r.reviewNeedsSubmit
-            limit 1");
+        // reviewNeedsSubmit is defined correctly for secondary
+        $any = $this->invariantq(self::reviewNeedsSubmit_query(REVIEW_SECONDARY) . " limit 1");
         if ($any) {
-            $this->invariant_error("reviewNeedsSubmit", "bad reviewNeedsSubmit for review #{0}/{1}");
+            $this->invariant_error("reviewNeedsSubmit", "bad reviewNeedsSubmit {3} for secondary review #{0}/{1}");
+        }
+
+        // reviewNeedsSubmit is defined correctly for others
+        $any = $this->invariantq(self::reviewNeedsSubmit_query(REVIEW_EXTERNAL) . " limit 1");
+        if ($any) {
+            $this->invariant_error("reviewNeedsSubmit", "bad reviewNeedsSubmit {3} for non-secondary review #{0}/{1}");
         }
 
         // submitted and ordinaled reviews are displayed
@@ -436,11 +456,10 @@ class ConfInvariants {
         return $this;
     }
 
-    /** @return $this */
-    function check_users() {
-        // load paper authors
+    /** @return array<string,list<int>> */
+    static function author_lcemail_map(Conf $conf) {
         $authors = [];
-        $result = $this->conf->qe("select paperId, authorInformation from Paper");
+        $result = $conf->qe("select paperId, authorInformation from Paper");
         while (($row = $result->fetch_row())) {
             $pid = intval($row[0]);
             foreach (explode("\n", $row[1]) as $auline) {
@@ -453,6 +472,13 @@ class ConfInvariants {
             }
         }
         Dbl::free($result);
+        return $authors;
+    }
+
+    /** @return $this */
+    function check_users() {
+        // load paper authors
+        $authors = self::author_lcemail_map($this->conf);
 
         // load primary contact links
         $primap = [];
@@ -545,12 +571,8 @@ class ConfInvariants {
             }
 
             // cflags reflects ContactPrimary
-            if ($uprimary !== isset($isprimary[$u->contactId])) {
-                if ($uprimary) {
-                    $this->invariant_error("user_cflags_primary", "user {$u->email}/{$u->contactId} marked primary, has no secondary");
-                } else {
-                    $this->invariant_error("user_cflags_primary", "user {$u->email}/{$u->contactId} not marked primary, has secondary");
-                }
+            if (!$uprimary && isset($isprimary[$u->contactId])) {
+                $this->invariant_error("user_cflags_primary", "user {$u->email}/{$u->contactId} not marked primary, has secondary");
             }
 
             // primaryContactId reflects ContactPrimary
@@ -578,10 +600,8 @@ class ConfInvariants {
         }
 
         // authors are all accounted for
-        if (false) { // XXX currently violated by email changes
-            foreach ($authors as $lemail => $pids) {
-                $this->invariant_error("author_contacts", "author {$lemail} of #{$pids[0]} lacking from database");
-            }
+        foreach ($authors as $lemail => $pids) {
+            $this->invariant_error("author_contacts", "author {$lemail} of #{$pids[0]} lacking from database");
         }
 
         return $this;
@@ -698,10 +718,20 @@ class ConfInvariants {
                 $this->irow = [$err->email, $err->computed_roles, $err->cdbRoles];
                 $this->invariant_error("cdbRoles", "user {0} has cdbRoles 0x{2:x}, expected 0x{1:x}");
             }
-            if (($cdb_cdbr = $cdbr[strtolower($err->email)] ?? 0) !== $err->computed_roles) {
-                $this->irow = [$err->email, $err->computed_roles, $cdb_cdbr];
-                $this->invariant_error("cdbRoles", "user {0} has contactdb roles 0x{2:x}, expected 0x{1:x}");
+            $lemail = strtolower($err->email);
+            $cdb_cdbr = $cdbr[$lemail] ?? null;
+            if ($cdb_cdbr !== null) {
+                unset($cdbr[$lemail]);
             }
+            if (($cdb_cdbr ?? 0) !== $err->computed_roles) {
+                $this->irow = [$err->email, $err->computed_roles, $cdb_cdbr];
+                $this->invariant_error("cdbRoles", "user {0} has contactdb roles {2:jx}, expected {1:jx}");
+            }
+        }
+
+        foreach ($cdbr as $lemail => $roles) {
+            $this->irow = [$lemail, null, $roles];
+            $this->invariant_error("cdbRoles", "user {0} has contactdb roles {2:jx}, expected {1:jx}");
         }
     }
 

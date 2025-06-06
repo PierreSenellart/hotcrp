@@ -186,7 +186,7 @@ class ManageEmail_Page {
         if ($this->user->primaryContactId > 0) {
             return true;
         }
-        $emails = Contact::session_users($this->qreq);
+        $emails = Contact::session_emails($this->qreq);
         $this->conf->prefetch_users_by_email($emails);
         $this->conf->prefetch_cdb_users_by_email($emails);
         $any = null;
@@ -207,7 +207,11 @@ class ManageEmail_Page {
         echo '<div class="form-section">',
             '<h3>Unlink accounts</h3>';
         if ($this->user->primaryContactId > 0) {
-            $pri = $this->user->similar_user_by_id($this->user->primaryContactId);
+            if ($this->user->is_cdb_user()) {
+                $pri = $this->conf->cdb_user_by_id($this->user->primaryContactId);
+            } else {
+                $pri = $this->conf->user_by_id($this->user->primaryContactId);
+            }
             echo '<p>This account, <strong class="sb">', htmlspecialchars($this->user->email),
                 '</strong>, is currently linked to primary account <strong class="sb">',
                 htmlspecialchars($pri->email), '</strong>. Use this option to unlink it.</p>';
@@ -328,7 +332,7 @@ class ManageEmail_Page {
         }
         if ($curval === "" && $this->qreq->signedin) {
             $latest_use = null;
-            foreach (Contact::session_users($this->qreq) as $e) {
+            foreach (Contact::session_emails($this->qreq) as $e) {
                 $use = UserSecurityEvent::session_latest_signin_by_email($this->qreq->qsession(), $e);
                 if ($use && (!$latest_use || $use->timestamp > $latest_use->timestamp)) {
                     $latest_use = $use;
@@ -340,7 +344,7 @@ class ManageEmail_Page {
         }
         $selected = null;
         $opts = [];
-        foreach (Contact::session_users($this->qreq) as $e) {
+        foreach (Contact::session_emails($this->qreq) as $e) {
             $opt = ["value" => $e];
             if ($key === "email"
                 && $this->token
@@ -1101,8 +1105,10 @@ class ManageEmail_Page {
         }
         $this->type = $this->qreq->t ?? "";
 
-        $this->token = TokenInfo::find_active($this->qreq->mesess, TokenInfo::MANAGEEMAIL, $this->conf);
-        if (!$this->token || $this->token->contactId !== $this->viewer->contactId) {
+        $this->token = TokenInfo::find($this->qreq->mesess, $this->conf);
+        if (!$this->token
+            || !$this->token->is_active(TokenInfo::MANAGEEMAIL)
+            || $this->token->contactId !== $this->viewer->contactId) {
             $this->ms->error_at("mesession", "<0>Email management session expired");
             $this->token = null;
             unset($this->qreq->step, $this->qreq->mesess);
@@ -1132,5 +1138,9 @@ class ManageEmail_Page {
     static function go(Contact $user, Qrequest $qreq) {
         $pg = new ManageEmail_Page($user, $qreq);
         $pg->run();
+    }
+
+    static function go_merge(Contact $user, Qrequest $qreq) {
+        $user->conf->redirect_hoturl("manageemail", ["t" => "link"]);
     }
 }

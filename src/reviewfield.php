@@ -1,6 +1,6 @@
 <?php
 // reviewfield.php -- HotCRP helper class for producing review forms and tables
-// Copyright (c) 2006-2024 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 // JSON schema for settings["review_form"]:
 // [{"id":FIELDID,"name":NAME,"description":DESCRIPTION,"order":ORDER,
@@ -436,6 +436,12 @@ abstract class ReviewField implements JsonSerializable {
         return $qreq[$key];
     }
 
+    /** @param Qrequest $qreq
+     * @return ?string */
+    function extract_qreq_has($qreq) {
+        return "";
+    }
+
     /** @param string $s
      * @return null|int|string|false */
     abstract function parse($s);
@@ -644,10 +650,13 @@ abstract class Discrete_ReviewField extends ReviewField {
      * @return string */
     abstract function unparse_graph($sci, $style);
 
-    /** @param array<int,int> $fmap
-     * @param int $fval
+    /** @param int $fval
+     * @param array<int,?int> $fvmap
      * @return ?int */
-    function renumber_value($fmap, $fval) {
+    function map_value($fval, $fvmap) {
+        if (array_key_exists($fval, $fvmap)) {
+            return $fvmap[$fval];
+        }
         return $fval;
     }
 }
@@ -1299,10 +1308,6 @@ class Score_ReviewField extends DiscreteValues_ReviewField {
 
     function parse_search(SearchWord $sword, ReviewSearchMatcher $rsm, PaperSearch $srch) {
         return Discrete_ReviewFieldSearch::parse_score($sword, $this, $rsm, $srch);
-    }
-
-    function renumber_value($fmap, $fval) {
-        return $fmap[$fval] ?? $fval;
     }
 }
 

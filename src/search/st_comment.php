@@ -1,6 +1,6 @@
 <?php
 // search/st_comment.php -- HotCRP helper class for searching for papers
-// Copyright (c) 2006-2023 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 class Comment_SearchTerm extends SearchTerm {
     /** @var Contact */
@@ -51,7 +51,7 @@ class Comment_SearchTerm extends SearchTerm {
     /** @param array{string,string,string,string} $m */
     static function response_factory($keyword, XtParams $xtp, $kwfj, $m) {
         if ($m[2] === "") {
-            $round = 0;
+            $round = null;
         } else {
             if ($m[2] !== "-" && str_ends_with($m[2], "-")) {
                 $m[2] = substr($m[2], 0, -1);
@@ -113,6 +113,9 @@ class Comment_SearchTerm extends SearchTerm {
     }
     function sqlexpr(SearchQueryInfo $sqi) {
         $sqi->add_comment_signature_columns();
+        if (!$sqi->included()) {
+            return "true";
+        }
         $where = [];
         if ($this->type_mask) {
             $where[] = "(commentType&{$this->type_mask})={$this->type_value}";
@@ -120,7 +123,7 @@ class Comment_SearchTerm extends SearchTerm {
         if ($this->only_author) {
             $where[] = "commentType>=" . CommentInfo::CTVIS_AUTHOR;
         }
-        if ($this->commentRound) {
+        if ($this->commentRound !== null) {
             $where[] = "commentRound=" . $this->commentRound;
         }
         if ($this->csm->has_contacts()) {
@@ -135,9 +138,8 @@ class Comment_SearchTerm extends SearchTerm {
         }
         if (($t = $sqi->try_add_table("Comments_", ["left join", "(select paperId, count(commentId) count from PaperComment" . ($where ? " where " . join(" and ", $where) : "") . " group by paperId)"]))) {
             return "coalesce({$t}.count,0)" . $this->csm->conservative_nonnegative_comparison();
-        } else {
-            return "true";
         }
+        return "true";
     }
     function test(PaperInfo $row, $xinfo) {
         $textless = $this->type_mask === (CommentInfo::CT_DRAFT | CommentInfo::CT_RESPONSE);
@@ -145,6 +147,7 @@ class Comment_SearchTerm extends SearchTerm {
         foreach ($row->viewable_comment_skeletons($this->user, $textless) as $crow) {
             if ($this->csm->test_contact($crow->contactId)
                 && ($crow->commentType & $this->type_mask) == $this->type_value
+                && ($this->commentRound === null || $crow->commentRound === $this->commentRound)
                 && (!$this->only_author || $crow->commentType >= CommentInfo::CTVIS_AUTHOR)
                 && (!$this->tags || $this->tags->test((string) $crow->viewable_tags($this->user))))
                 ++$n;

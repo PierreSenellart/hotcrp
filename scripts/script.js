@@ -1500,80 +1500,89 @@ function hoturl_clean(x, page_component, allow_fail) {
     }
 }
 
+function hoturl_clean_param(x, k, value_match, allow_fail) {
+    let v;
+    if (x.last === false) {
+        /* do nothing */
+    } else if ((v = x.p.get(k)) && value_match.test(v)) {
+        x.last = v;
+        x.t += "/" + urlencode(v).replace(/%2F/g, "/");
+        x.p.delete(k);
+    } else if (!allow_fail) {
+        x.last = false;
+    }
+}
+
 function hoturl(page, options) {
-    var i, k, m, v, x, xv, anchor = "", want_forceShow;
+    const page1 = page, options1 = options;
+    let want_forceShow = false;
     if (siteinfo.site_relative == null || siteinfo.suffix == null) {
         siteinfo.site_relative = siteinfo.suffix = "";
         log_jserror("missing siteinfo");
     }
 
-    x = {t: page};
-    if (options == null && (i = page.indexOf("?")) > 0) {
-        options = page.substring(i);
-        page = page.substring(0, i);
+    let params, pos, v, m;
+    if (options == null && (pos = page.indexOf("?")) > 0) {
+        options = page.substring(pos);
+        page = page.substring(0, pos);
     }
     if (typeof options === "string") {
-        if (options.charAt(0) === "?")
-            options = options.substring(1);
-        if ((m = options.match(/^(.*?)(#.*)$/))) {
-            options = m[1];
-            anchor = m[2];
+        if ((pos = options.indexOf("#")) >= 0) {
+            params = new URLSearchParams(options.substring(0, pos));
+            params.set("#", options.substring(pos + 1));
+        } else {
+            params = new URLSearchParams(options);
         }
-        xv = options.split(/&/);
+    } else if (options instanceof URLSearchParams) {
+        params = options;
     } else {
-        xv = [];
-        for (k in options) {
-            v = options[k];
-            if (v == null)
-                /* skip */;
-            else if (k === "#")
-                anchor = "#" + v;
-            else
-                xv.push(encodeURIComponent(k).concat("=", urlencode(v)));
+        params = new URLSearchParams;
+        for (const k in options || {}) {
+            const v = options[k];
+            if (v != null)
+                params.set(k, v);
         }
     }
 
     if (page.startsWith("=")) {
-        xv.push("post=" + siteinfo.postvalue);
+        params.set("post", siteinfo.postvalue);
         page = page.substring(1);
     }
-    if (page.substring(0, 3) === "api" && !hoturl_find(xv, /^base=/)) {
-        xv.push("base=" + encodeURIComponent(siteinfo.site_relative));
+    if (page.startsWith("api") && !params.has("base")) {
+        params.set("base", siteinfo.site_relative);
     }
-    x = {t: page, v: xv};
 
+    const x = {t: page, p: params};
     if (page === "paper") {
-        hoturl_clean(x, /^p=(\d+)$/);
-        hoturl_clean(x, /^m=(\w+)$/);
-        if (x.last === "api") {
-            hoturl_clean(x, /^fn=(\w+)$/);
-            want_forceShow = true;
-        }
+        hoturl_clean_param(x, "p", /^\d+$/);
+        hoturl_clean_param(x, "m", /^\w+$/);
     } else if (page === "review") {
-        hoturl_clean(x, /^p=(\d+)$/);
+        hoturl_clean_param(x, "p", /^\d+$/);
         if (x.last !== false
-            && (m = hoturl_find(xv, /^r=(\d+)([A-Z]+|r\d+|rnew)$/))
+            && (v = params.get("r")) !== null
+            && (m = v.match(/^(\d+)([A-Z]+|r\d+|rnew)$/))
             && x.t.endsWith("/" + m[1])) {
             x.t += m[2];
-            x.v.splice(m[0], 1);
+            params.delete("r");
         }
     } else if (page === "help") {
-        hoturl_clean(x, /^t=(\w+)$/);
-    } else if (page.substring(0, 3) === "api") {
+        hoturl_clean_param(x, "t", /^\w+$/);
+    } else if (page.startsWith("api")) {
         if (page.length > 3) {
             x.t = "api";
-            x.v.push("fn=" + page.substring(4));
+            params.set("fn", page.substring(4));
         }
-        hoturl_clean(x, /^p=(\d+|new)$/, true);
-        hoturl_clean(x, /^fn=(\w+)$/);
+        hoturl_clean_param(x, "p", /^(?:\d+|new)$/, true);
+        hoturl_clean_param(x, "fn", /^\w+$/);
         want_forceShow = true;
     } else if (page === "settings") {
-        hoturl_clean(x, /^group=(\w+)$/);
+        hoturl_clean_param(x, "group", /^\w+$/);
     } else if (page === "doc") {
-        hoturl_clean(x, /^file=([^&]+)$/);
+        hoturl_clean_param(x, "file", /^[-\w/.]+$/);
     }
 
     if (siteinfo.suffix !== "") {
+        let i, k;
         if ((i = x.t.indexOf("/")) <= 0) {
             i = x.t.length;
         }
@@ -1586,26 +1595,46 @@ function hoturl(page, options) {
 
     if (siteinfo.want_override_conflict
         && want_forceShow
-        && !hoturl_find(xv, /^forceShow=/)) {
-        xv.push("forceShow=1");
+        && !params.has("forceShow")) {
+        params.set("forceShow", "1");
     }
     if (siteinfo.defaults) {
-        xv.push(serialize_object(siteinfo.defaults));
+        for (const k in siteinfo.defaults) {
+            if ((v = siteinfo.defaults[k]) != null
+                && !params.has(k)) {
+                params.set(k, v);
+            }
+        }
     }
-    if (xv.length){
-        x.t += "?" + xv.join("&");
+    let tail = "";
+    if (params.has("#")) {
+        tail = "#" + params.get("#");
+        params.delete("#");
     }
-    return siteinfo.site_relative + x.t + anchor;
+    const paramstr = params.toString();
+    if (paramstr !== "") {
+        tail = "?" + paramstr + tail;
+    }
+    return siteinfo.site_relative + x.t + tail;
 }
 
 function hoturl_html(page, options) {
     return escape_html(hoturl(page, options));
 }
 
+function make_URL(url, loc) {
+    try {
+        return new URL(url, loc);
+    } catch (err) {
+        log_jserror(`failed to construct URL("${url}", "${loc}")`, err);
+        throw err;
+    }
+}
+
 function url_absolute(url, loc) {
     loc = loc || window.location.href;
     if (window.URL) {
-        return (new URL(url, loc)).href;
+        return make_URL(url, loc).href;
     }
     var x = "", m;
     if (!/^\w+:\/\//.test(url)
@@ -3225,6 +3254,9 @@ function $popup(options) {
             const ml = (message_list && message_list.message_list) || message_list;
             feedback.render_list_within(forme, ml, options);
         },
+        awaken: function () {
+            $(forme).awaken();
+        },
         close: close
     };
     return self;
@@ -3763,7 +3795,7 @@ handle_ui.on("js-tracker", function (evt) {
                 gvist = "PC members without tag " + gvis.substring(1);
             $t.append($e("div", "entryi",
                 $e("label", null, "Global visibility"),
-                $e("div", "entry", gvist, $e("div", "f-d", "This ", $e("a", {href: hoturl("settings", "group=tracks")}, "setting"), " restricts all trackers."))));
+                $e("div", "entry", gvist, $e("div", "f-d", "This ", $e("a", {href: hoturl("settings", {group: "tracks"})}, "setting"), " restricts all trackers."))));
         }
         $t.append($e("div", "entryi", $e("label"),
             $e("div", "entry", $e("label", "checki",
@@ -3847,8 +3879,7 @@ handle_ui.on("js-tracker", function (evt) {
                     start();
                     $pu.find("button[name=new]").click();
                 }
-                if ($pu)
-                    $pu.show_errors(data);
+                $pu && $pu.show_errors(data);
             }
         };
     }
@@ -5208,7 +5239,7 @@ handle_ui.on("input.js-email-populate", function () {
 
     function success(data) {
         data = data || {};
-        if (data.ok) {
+        if (data.match || (data.ok && !data.email)) {
             if (data.email) {
                 data.lemail = data.email.toLowerCase();
             } else {
@@ -5225,7 +5256,7 @@ handle_ui.on("input.js-email-populate", function () {
                 email_info.push(v, data);
             }
         }
-        if (!data.ok || data.lemail !== v) {
+        if (!data.match) {
             data = {};
         }
         if (self.value.trim() !== v
@@ -5283,7 +5314,6 @@ handle_ui.on("input.js-email-populate", function () {
 })();
 
 function render_mail_preview(e, mp, fields) {
-    var i, f, e1;
     e.replaceChildren();
     function make_field_div(label, text) {
         var e1 = document.createElement("div"),
@@ -5296,10 +5326,11 @@ function render_mail_preview(e, mp, fields) {
         e1.append(e2, e3);
         return e1;
     }
-    for (i = 0; i !== fields.length; ++i) {
-        f = fields[i];
+    for (let i = 0; i !== fields.length; ++i) {
+        const f = fields[i];
         if (!mp[f])
             continue;
+        let e1;
         if (f === "recipients") {
             if (!mp.recipient_description)
                 continue;
@@ -6560,20 +6591,18 @@ function append_review_id(rrow, eheader) {
 }
 
 hotcrp.add_review = function (rrow) {
-    var rid = rrow.pid + (rrow.ordinal || "r" + rrow.rid), rlink, rdesc,
-        e, earticle, eheader;
-
     // review link and description
-    rlink = "p=".concat(rrow.pid, "&r=", rid);
+    const rid = rrow.pid + (rrow.ordinal || "r" + rrow.rid);
+    const rlink = {p: rrow.pid, r: rid};
     if (siteinfo.want_override_conflict)
-        rlink += "&forceShow=1";
-    rdesc = rrow.subreview ? "Subreview" : "Review";
+        rlink.forceShow = 1;
+    let rdesc = rrow.subreview ? "Subreview" : "Review";
     if (rrow.draft)
         rdesc = "Draft " + rdesc;
     if (rrow.ordinal)
         rdesc += " #" + rid;
 
-    earticle = document.createElement("article");
+    const earticle = document.createElement("article");
     earticle.id = "r" + rid;
     earticle.className = "pcard revcard " + (rrow.subreview || rrow.draft ? "" : "revsubmitted ") + "need-anchor-unfold has-fold fold20" + (rrow.collapsed ? "c" : "o");
     earticle.setAttribute("data-pid", rrow.pid);
@@ -6582,7 +6611,7 @@ hotcrp.add_review = function (rrow) {
     $(".pcontainer")[0].appendChild(earticle);
 
     // header
-    eheader = $e("header", "revcard-head", make_review_h2(rrow, rlink, rdesc));
+    const eheader = $e("header", "revcard-head", make_review_h2(rrow, rlink, rdesc));
     append_review_id(rrow, eheader);
     eheader.appendChild($e("hr", "c"));
     earticle.appendChild(eheader);
@@ -6593,7 +6622,7 @@ hotcrp.add_review = function (rrow) {
     }
 
     // body
-    e = $e("div", "revcard-render fx20");
+    let e = $e("div", "revcard-render fx20");
     earticle.appendChild(e);
     render_review_body_in(rrow, e);
 
@@ -6647,6 +6676,8 @@ function ReviewField(fj) {
         this.required = fj.required;
     if (fj.exists_if != null)
         this.exists_if = fj.exists_if;
+    if (fj.convertible_to != null)
+        this.convertible_to = fj.convertible_to;
 }
 
 ReviewField.prototype.render_in = function (fv, rrow, fe) {
@@ -6891,14 +6922,13 @@ hotcrp.make_review_field = function (fj) {
         return new ReviewField(fj);
 };
 
-hotcrp.set_review_form = function (j) {
-    var i;
+hotcrp.set_review_form = function (rfj) {
     formj = formj || {};
-    for (i in j) {
-        formj[j[i].uid] = hotcrp.make_review_field(j[i]);
-        form_order = $.map(formj, function (v) { return v; });
-        form_order.sort(function (a, b) { return a.order - b.order; });
+    for (const j of rfj) {
+        formj[j.uid] = hotcrp.make_review_field(j);
     }
+    form_order = $.map(formj, function (v) { return v; });
+    form_order.sort(function (a, b) { return a.order - b.order; });
 };
 
 })($);
@@ -7498,7 +7528,7 @@ function cmt_save_callback(cj) {
     var cid = cj_cid(cj), celt = $$(cid), form = celt.querySelector("form");
     return function (data) {
         if (!data.ok) {
-            if (data.loggedout) {
+            if (data.signedout || data.loggedout) {
                 has_unload = false;
                 form.method = "post";
                 var arg = {editcomment: 1, p: siteinfo.paperid};
@@ -9541,11 +9571,8 @@ function rp_blur() {
 }
 
 function rp_change() {
-    var self = this, pid = this.name.substr(7), data = {pref: self.value}, pos;
-    if ((pos = pid.indexOf("u")) > 0) {
-        data.u = pid.substr(pos + 1);
-        pid = pid.substr(0, pos);
-    }
+    const self = this, name = this.name.substr(7), pos = name.indexOf("u"),
+        q = pos > 0 ? {p: name.substr(0, pos), u: name.substr(pos + 1)} : {p: name};
     function success(rv) {
         minifeedback(self, rv);
         if (rv && rv.ok && rv.value != null) {
@@ -9554,8 +9581,8 @@ function rp_change() {
         }
     }
     $ajax.condition(function () {
-        $.ajax(hoturl("=api/revpref", {p: pid}), {
-            method: "POST", data: data,
+        $.ajax(hoturl("=api/revpref", q), {
+            method: "POST", data: {pref: self.value},
             success: success, trackOutstanding: true
         });
     });
@@ -9604,16 +9631,7 @@ function facet_tablelist(tfacet) {
 }
 
 function tablelist_search(tbl) {
-    var x = tbl.getAttribute("data-search-params");
-    if (x === "" && tbl === mainlist()) { /* XXX backward compat */
-        x = hoturl_search(window.location.href);
-        if (hoturl_search(x, "q") === null)
-            x = hoturl_search(x, "q", "");
-        if (hoturl_search(x, "sort") === null)
-            x = hoturl_search(x, "sort", "none");
-        tbl.setAttribute("data-search-params", x);
-    }
-    return x;
+    return tbl.getAttribute("data-search-params");
 }
 
 
@@ -9892,13 +9910,13 @@ function tablelist_header_sorter(th) {
     return pc;
 }
 
-function tablelist_apply(tbl, data, searchparam) {
+function tablelist_apply(tbl, data, searchp) {
     var ids = data.ids;
     if (!ids && data.hotlist)
         ids = new Hotlist(data.hotlist).ids();
     if (!ids)
         return;
-    tbl.setAttribute("data-search-params", searchparam);
+    tbl.setAttribute("data-search-params", searchp);
     tablelist_reorder(tbl, ids, data.groups, true);
     if (data.groups) {
         tbl.setAttribute("data-groups", JSON.stringify(data.groups));
@@ -9906,7 +9924,7 @@ function tablelist_apply(tbl, data, searchparam) {
         tbl.removeAttribute("data-groups");
     }
     tbl.setAttribute("data-hotlist", data.hotlist || "");
-    var sortanal = sorter_analyze(hoturl_search(searchparam, "sort"));
+    var sortanal = sorter_analyze(searchp.get("sort"));
     $(tbl).children("thead").find("th.sortable").each(function () {
         var pc = this.getAttribute("data-pc"),
             pcsort = this.getAttribute("data-pc-sort"),
@@ -9933,32 +9951,41 @@ function tablelist_apply(tbl, data, searchparam) {
             }
         }
     });
-    var form = tbl.closest("form");
+    const form = tbl.closest("form");
     if (form) {
-        var a = hoturl_search(form.action, "sort", hoturl_search(searchparam, "sort"));
-        a = hoturl_search(a, "forceShow", hoturl_search(searchparam, "forceShow") || null);
-        form.action = a;
+        const url = make_URL(form.action, window.location.href);
+        url.searchParams.set("sort", searchp.get("sort"));
+        const fs = searchp.get("forceShow");
+        fs ? url.searchParams.set("forceShow", fs) : url.searchParams.delete("forceShow");
+        form.action = url;
     }
 }
 
 function tablelist_load(tbl, k, v) {
-    var searchparam = tablelist_search(tbl);
-    if (k) {
-        searchparam = hoturl_search(searchparam, k, v != null ? v : "");
-    }
-    function success(data) {
-        var use_history = tbl === mainlist() && k;
+    let searchp = new URLSearchParams(tablelist_search(tbl));
+    k && searchp.set(k, v != null ? v : "");
+    function history_success(data) {
+        const url = make_URL(window.location.href);
+        v == null ? url.searchParams.delete(k) : url.searchParams.set(k, v);
         if (data.ok && data.ids && tablelist_compatible(tbl, data)) {
-            use_history && push_history_state();
-            tablelist_apply(tbl, data, searchparam);
-            use_history && push_history_state(hoturl_search(window.location.href, k, v));
-        } else if (use_history) {
-            window.location = hoturl_search(window.location.href, k, v);
+            push_history_state();
+            tablelist_apply(tbl, data, searchp);
+            push_history_state(url.toString());
+        } else {
+            window.location = url;
         }
     }
-    $.ajax(hoturl("api/search", searchparam), {
-        method: "GET", cache: false, success: success
+    function normal_success(data) {
+        if (data.ok && data.ids && tablelist_compatible(tbl, data))
+            tablelist_apply(tbl, data, searchp);
+    }
+    const use_history = k && tbl === mainlist();
+    searchp.set("hotlist", "1");
+    $.ajax(hoturl("api/search", searchp), {
+        method: "GET", cache: false,
+        success: use_history ? history_success : normal_success
     });
+    searchp.delete("hotlist");
 }
 
 function search_sort_click(evt) {
@@ -9994,7 +10021,7 @@ if ("pushState" in window.history) {
     $(window).on("popstate", function (evt) {
         var tbl = mainlist(), state = (evt.originalEvent || evt).state;
         if (tbl && state && state.mainlist && state.mainlist.search)
-            tablelist_apply(tbl, state.mainlist, state.mainlist.search);
+            tablelist_apply(tbl, state.mainlist, new URLSearchParams(state.mainlist.search));
     });
     $(function () {
         $("#scoresort").on("change", scoresort_change);
@@ -11401,17 +11428,17 @@ function make_callback(plistui, type) {
             if (tr.nodeName === "TR"
                 && tr.hasAttribute("data-pid")
                 && hasClass(tr, "pl")) {
-                let p = +tr.getAttribute("data-pid"),
+                const p = +tr.getAttribute("data-pid"),
                     data = values.data[p],
                     attr = values.attr && values.attr[p],
                     classes = values.classes && values.classes[p];
                 if (attr) {
-                    for (let k in attr) {
+                    for (const k in attr) {
                         tr.setAttribute(k, attr[k]);
                     }
                 }
                 if (data) {
-                    let e = plistui.pidfield(p, f, index);
+                    const e = plistui.pidfield(p, f, index);
                     set_pidfield(f, e, data[htmlk], classes && classes[htmlk]);
                 }
                 ++n;
@@ -12011,7 +12038,7 @@ handle_ui.on("js-signin", function (evt) {
     }
     $(form).find("button").prop("disabled", true);
     evt.preventDefault();
-    $.get(hoturl("api/session"), function (r) {
+    $.get(hoturl("api/session"), function () {
         if (!submitter) {
             form.submit();
             return;
@@ -13419,7 +13446,7 @@ handle_ui.on("js-edit-formulas", function () {
         }
         $pu = $popup({className: "modal-dialog-w40", form_class: "need-diff-check"})
             .append($e("h2", null, "Named formulas"),
-                $e("p", null, $e("a", {href: hoturl("help", "t=formulas"), target: "_blank", rel: "noopener"}, "Formulas"), ", such as “sum(OveMer)”, are calculated from review statistics and paper information. Named formulas are shared with the PC and can be used in other formulas. To view an unnamed formula, use a search term like “show:(sum(OveMer))”."),
+                $e("p", null, $e("a", {href: hoturl("help", {t: "formulas"}), target: "_blank", rel: "noopener"}, "Formulas"), ", such as “sum(OveMer)”, are calculated from review statistics and paper information. Named formulas are shared with the PC and can be used in other formulas. To view an unnamed formula, use a search term like “show:(sum(OveMer))”."),
                 ef, $e("button", {type: "button", name: "add"}, "Add named formula"))
             .append_actions($e("button", {type: "submit", name: "saveformulas", value: 1, class: "btn-primary"}, "Save"), "Cancel")
             .on("click", "button", click).on("submit", submit).show();
@@ -14171,10 +14198,6 @@ return function (n, scheme, flip) {
 
 // score charts
 var scorechart = (function ($) {
-var has_canvas = (function () {
-    var e = document.createElement("canvas");
-    return !!(e.getContext && e.getContext("2d"));
-})();
 var blackcolor = [0, 0, 0], graycolor = [190, 190, 255];
 
 function setup_canvas(canvas, w, h) {
@@ -14198,37 +14221,24 @@ function setup_canvas(canvas, w, h) {
 }
 
 function analyze_sc(sc) {
-    var anal = {
-        v: [], max: 0, h: null, lo: 1, hi: 0, flip: false, sum: 0, sv: "sv"
-    }, m, i, vs, x;
-
-    m = /(?:^|[&;])v=(.*?)(?:[&;]|$)/.exec(sc);
-    vs = m[1].split(/,/);
-    anal.hi = vs.length;
-    for (i = 0; i !== vs.length; ++i) {
-        if (/^\d+$/.test(vs[i]))
-            x = parseInt(vs[i], 10);
-        else
-            x = 0;
-        anal.v.push(x);
-        anal.max = Math.max(anal.max, x);
-        anal.sum += x;
+    const anal = {v: [], max: 0, sum: 0, h: null},
+        vs = sc.get("v").split(",");
+    for (const x of vs) {
+        const v = /^\d+$/.test(x) ? parseInt(x, 10) : 0;
+        anal.v.push(v);
+        anal.max = Math.max(anal.max, v);
+        anal.sum += v;
     }
-
-    if ((m = /(?:^|[&;])h=(\d+(?:,\d+)*)(?:[&;]|$)/.exec(sc))) {
-        x = m[1].split(",");
+    let s = sc.get("h") || "";
+    if (/^\d+(?:,\d+)*$/.test(s)) {
         anal.h = [];
-        for (i = 0; i !== x.length; ++i)
-            anal.h.push(parseInt(x[i], 10))
+        for (const x of s.split(","))
+            anal.h.push(parseInt(x, 10));
     }
-    if ((m = /(?:^|[&;])lo=([^&;\s]+)/.exec(sc)))
-        anal.lo = m[1];
-    if ((m = /(?:^|[&;])hi=([^&;\s]+)/.exec(sc)))
-        anal.hi = m[1];
-    anal.flip = /(?:^|[&;])flip=[^0&;]/.test(sc);
-    if ((m = /(?:^|[&;])sv=([^;&]*)(?:[&;]|$)/.exec(sc)))
-        anal.sv = decodeURIComponent(m[1]);
-
+    anal.lo = sc.get("lo") || 1;
+    anal.hi = sc.get("hi") || vs.length;
+    anal.flip = (s = sc.get("flip")) && s !== "0";
+    anal.sv = sc.get("sv") || "sv";
     anal.fx = make_color_scheme(vs.length, anal.sv, anal.flip);
     return anal;
 }
@@ -14303,21 +14313,23 @@ function scorechart1_s2(sc) {
 }
 
 function scorechart1() {
-    var sc = this.getAttribute("data-scorechart"), e;
+    const sct = this.getAttribute("data-scorechart");
     if (this.firstChild
-        && this.firstChild.getAttribute("data-scorechart") === sc)
+        && this.firstChild.getAttribute("data-scorechart") === sct)
         return;
     this.replaceChildren();
-    if (sc.endsWith("&s=1") && has_canvas)
+    const sc = new URLSearchParams(sct), s = sc.get("s");
+    let e;
+    if (s === "1")
         e = scorechart1_s1(sc);
-    else if (sc.endsWith("&s=2") && has_canvas)
+    else if (s === "2")
         e = scorechart1_s2(sc);
     else {
         e = document.createElement("img");
         e.src = hoturl("scorechart", sc);
         e.alt = this.getAttribute("title");
     }
-    e.setAttribute("data-scorechart", sc);
+    e.setAttribute("data-scorechart", sct);
     this.insertBefore(e, null);
 }
 
@@ -14575,20 +14587,6 @@ $(function () {
         err.push(locator(this));
         elt.push(this);
     });
-    var example;
-    try {
-        example = (0, eval)("(function (a) { var j = 0; for (i of a) { j += i; } return j; })([1, 10, 200])");
-        example !== 211 && err.push("for..of loop produces unexpected result");
-    } catch (e) {
-        err.push("for..of loop not supported");
-    }
-    example = null;
-    try {
-        example = (0, eval)("(function (a) { let j = a.length; return j + a[0]; })([1, 10, 200])");
-        example !== 4 && err.push("let test produces unexpected result");
-    } catch (e) {
-        err.push("let not supported");
-    }
     if (document.documentMode || window.attachEvent) {
         var msg = $('<div class="msg msg-error"></div>').appendTo("#h-messages");
         feedback.append_item_near(msg[0], {message: "<0>This site no longer supports Internet Explorer", status: 2});

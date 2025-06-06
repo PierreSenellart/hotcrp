@@ -832,6 +832,26 @@ class Unit_Tester {
         xassert_eqq($pe->op->subtype, "f");
     }
 
+    function test_span_balanced_parens_nbsp() {
+        xassert_eqq(SearchParser::span_balanced_parens("abc def"), 3);
+        xassert_eqq(SearchParser::span_balanced_parens("abc() def"), 5);
+        xassert_eqq(SearchParser::span_balanced_parens("abc()def ghi"), 8);
+        xassert_eqq(SearchParser::span_balanced_parens("abc(def g)hi"), 13);
+        xassert_eqq(SearchParser::span_balanced_parens("abc(def g)hi jk"), 13);
+        xassert_eqq(SearchParser::span_balanced_parens("abc(def g)h)i jk"), 12);
+        xassert_eqq(SearchParser::span_balanced_parens("abc(def [g)h)i jk"), 13);
+        xassert_eqq(SearchParser::span_balanced_parens("abc(def sajf"), 13);
+        xassert_eqq(SearchParser::span_balanced_parens("() def"), 2);
+        xassert_eqq(SearchParser::span_balanced_parens("()a def"), 3);
+
+        $m = SearchParser::split_balanced_parens(" a(b) )c");
+        xassert_array_eqq($m, ["a(b)", ")c"]);
+
+        $sp = new SearchParser("a(b(c(d(e) ) ) ) ", 1);
+        $x = $sp->shift_balanced_parens();
+        xassert_eqq($x, "(b(c(d(e) ) ) )");
+    }
+
     function test_unpack_comparison() {
         xassert_eqq(CountMatcher::unpack_comparison("x:2"), ["x", 2, 2.0]);
         xassert_eqq(CountMatcher::unpack_comparison("x:2."), ["x", 2, 2.0]);
@@ -1326,21 +1346,21 @@ class Unit_Tester {
 
     function test_qreq_make_url() {
         $user = Contact::make($this->conf);
-        $qreq = TestRunner::make_qreq($user, "signin?email=foo@x.com", "POST");
+        $qreq = TestQreq::post(["email" => "foo@x.com"])->set_page("signin")->set_path("");
         xassert_eqq($qreq->page(), "signin");
         xassert_eqq($qreq->path(), "");
         xassert_eqq($qreq->method(), "POST");
         xassert($qreq->valid_post());
         xassert_eqq($qreq["email"], "foo@x.com");
 
-        $qreq = TestRunner::make_qreq($user, "signin/shit/yeah/?email=foo@x.com", "POST");
+        $qreq = TestQreq::post(["email" => "foo@x.com"])->set_page("signin")->set_path("/shit/yeah/");
         xassert_eqq($qreq->page(), "signin");
         xassert_eqq($qreq->path(), "/shit/yeah/");
         xassert_eqq($qreq->method(), "POST");
         xassert($qreq->valid_post());
         xassert_eqq($qreq["email"], "foo@x.com");
 
-        $qreq = TestRunner::make_qreq($user, "signin/shit/yeah/?%65%3Dmail=foo%40x.com&password=x", "POST");
+        $qreq = TestQreq::post_page("signin/shit/yeah/", ["e=mail" => "foo@x.com", "password" => "x"]);
         xassert_eqq($qreq->page(), "signin");
         xassert_eqq($qreq->path(), "/shit/yeah/");
         xassert_eqq($qreq->method(), "POST");
@@ -1398,77 +1418,6 @@ class Unit_Tester {
         $ts->__add(10, "Fudge:Questions");
         $ts->sort_by_name();
         xassert_eqq(json_encode($ts->as_array()), '{"3":"Fudge","9":"Fudge: All of them","5":"Fudge: Opening","4":"Fudge: Packing","7":"Fudge: Really","10":"Fudge:Questions","6":"Fudge: Others","8":"Fudgey","1":"None of the above","2":"Other"}');
-    }
-
-    static function getopt_parse($getopt, $argv) {
-        try {
-            return $getopt->parse($argv);
-        } catch (CommandLineException $ex) {
-            return $ex->getMessage();
-        }
-    }
-
-    function test_getopt() {
-        $arg = (new Getopt)->long("a", "ano", "b[]", "c[]", "d:", "e[]+")
-            ->parse(["fart", "-a", "-c", "x", "-cy", "-d=a", "-e", "a", "b", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"c":["x","y"],"d":"a","e":["a","b","c"],"_":[]}');
-
-        $arg = (new Getopt)->short("ab[]c[]d:e[]+")->long("ano")
-            ->parse(["fart", "-a", "-c", "x", "-cy", "-d=a", "-e", "a", "b", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"c":["x","y"],"d":"a","e":["a","b","c"],"_":[]}');
-
-        $arg = (new Getopt)->short("ab[]c[]d:e[]+")->long("ano")
-            ->parse(["fart", "-a", "-c", "x", "-cy", "-d=a", "-e", "a", "b", "--", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"c":["x","y"],"d":"a","e":["a","b"],"_":["c"]}');
-
-        $arg = (new Getopt)->short("ab[]c[]d:e[]+")->long("ano")
-            ->parse(["fart", "-a", "-c", "x", "-cy", "-d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"c":["x","y"],"d":"a","e":["a","b"],"_":["c"]}');
-
-        $arg = (new Getopt)->short("ab[]c[]d:e[]+")->long("ano")
-            ->parse(["fart", "-a", "-c", "x", "-cy", "d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"c":["x","y"],"_":["d=a","-e","a","b","-a","c"]}');
-
-        $arg = (new Getopt)->short("ab[]c[]d:e[]+")->long("ano")->interleave(true)
-            ->parse(["fart", "-a", "-c", "x", "-cy", "d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"c":["x","y"],"e":["a","b"],"_":["d=a","c"]}');
-
-        $arg = (new Getopt)->short("ab[]c[]d:e[]+")->long("ano")->interleave(true)
-            ->parse(["fart", "-a", "--", "-c", "x", "-cy", "d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"_":["-c","x","-cy","d=a","-e","a","b","-a","c"]}');
-
-        $arg = self::getopt_parse((new Getopt)->short("ab[]c[]d:e[]+")->long("ano")->interleave(true),
-            ["fart", "-a", "--", "-c", "x", "-cy", "d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":false,"_":["-c","x","-cy","d=a","-e","a","b","-a","c"]}');
-
-        $arg = self::getopt_parse((new Getopt)->short("ab[]c[]d:e[]+")->long("ano")->interleave(true),
-            ["fart", "-a=xxxx", "--", "-c", "x", "-cy", "d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '"`-a` takes no argument"');
-
-        $arg = self::getopt_parse((new Getopt)->short("ab[]c[]d:e[]+")->long("ano")->interleave(true),
-            ["fart", "-axxxx", "--", "-c", "x", "-cy", "d=a", "-e", "a", "b", "-a", "c"]);
-        xassert_eqq(json_encode($arg), '"Unknown option `-x`"');
-
-        $arg = self::getopt_parse((new Getopt)->long("a: =FOO {n}"),
-            ["fart", "-a10", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":10,"_":["c"]}');
-
-        $arg = self::getopt_parse((new Getopt)->long("a: !subc {n} =FOO"),
-            ["fart", "-a10", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":10,"_":["c"]}');
-
-        $arg = self::getopt_parse((new Getopt)->long("a: {n} =FOO"),
-            ["fart", "-a10x", "c"]);
-        xassert_eqq(json_encode($arg), '"`-a` requires integer"');
-
-        $arg = self::getopt_parse((new Getopt)->long("a: =FOO"),
-            ["fart", "-a10", "c"]);
-        xassert_eqq(json_encode($arg), '{"a":"10","_":["c"]}');
-    }
-
-    function test_getopt_count() {
-        $arg = (new Getopt)->short("vV#x")->parse(["fart", "-vVVxV"]);
-        xassert_eqq(json_encode($arg), '{"v":false,"V":3,"x":false,"_":[]}');
     }
 
     function test_friendly_boolean() {

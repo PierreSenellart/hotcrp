@@ -372,9 +372,14 @@ function friendly_boolean($x) {
     } else if (is_string($x) || is_int($x)) {
         // 0, false, off, no: false; 1, true, on, yes: true
         return filter_var($x, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-    } else {
-        return null;
     }
+    return null;
+}
+
+/** @param ?int $x
+ * @return ?bool */
+function nbool($x) {
+    return $x !== null ? $x !== 0 : null;
 }
 
 /** @param ?string $varname
@@ -573,16 +578,15 @@ function str_list_lower_bound($needle, $haystack) {
 
 /** @param mixed $a */
 function array_to_object_recursive($a) {
-    if (is_array($a) && is_associative_array($a)) {
-        $o = (object) [];
-        foreach ($a as $k => $v) {
-            if ($k !== "")
-                $o->$k = array_to_object_recursive($v);
-        }
-        return $o;
-    } else {
+    if (!is_array($a) || !is_associative_array($a)) {
         return $a;
     }
+    $o = (object) [];
+    foreach ($a as $k => $v) {
+        if ($k !== "")
+            $o->$k = array_to_object_recursive($v);
+    }
+    return $o;
 }
 
 function object_replace($a, $b) {
@@ -690,17 +694,6 @@ function debug_string_backtrace($ex = null, $limit = 32) {
         $s[] = "#{$frame} {$fi}{$ln}{$fn}\n";
     }
     return join("", $s);
-}
-
-
-// zlib helper
-
-if (!function_exists("zlib_get_coding_type")) {
-    /** @return bool
-     * @phan-suppress-next-line PhanRedefineFunctionInternal */
-    function zlib_get_coding_type() {
-        return false;
-    }
 }
 
 
