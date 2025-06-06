@@ -483,9 +483,9 @@ class Users_Page {
 
     private function print() {
         if ($this->qreq->t === "pc") {
-            $title = "Program committee";
+            $title = "Committee";
         } else if (str_starts_with($this->qreq->t, "#")) {
-            $title = "#" . substr($this->qreq->t, 1) . " program committee";
+            $title = "#" . substr($this->qreq->t, 1) . " committee";
         } else {
             $title = "Users";
         }

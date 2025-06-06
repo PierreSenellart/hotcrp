@@ -7,7 +7,7 @@
     {
         "name": "basics/names", "order": 10,
         "print_function": "Basics_SettingParser::print_names",
-        "title": "Conference information",
+        "title": "Information",
         "settings": [
             "conference_abbreviation",
             "conference_name",

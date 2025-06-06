@@ -142,7 +142,7 @@ class Home_Page {
         $gx->print_members("home/sidebar/info");
         if (($t = ob_get_clean())) {
             echo '<div class="homegrp"><h2 class="home">',
-                $user->conf->_c("home", "Conference information"),
+                $user->conf->_c("home", "Information"),
                 '</h2><ul>', $t, '</ul></div>';
         }
     }
@@ -153,13 +153,13 @@ class Home_Page {
     }
     static function print_info_pc(Contact $user) {
         if ($user->can_view_pc()) {
-            echo '<li>', Ht::link("Program committee", $user->conf->hoturl("users", "t=pc")), '</li>';
+            echo '<li>', Ht::link("Committee", $user->conf->hoturl("users", "t=pc")), '</li>';
         }
     }
     static function print_info_site(Contact $user) {
         if (($site = $user->conf->opt("conferenceSite"))
             && $site !== $user->conf->opt("paperSite")) {
-            echo '<li>', Ht::link("Conference site", $site), '</li>';
+            echo '<li>', Ht::link("More information", $site), '</li>';
         }
     }
     static function print_info_accepted(Contact $user) {

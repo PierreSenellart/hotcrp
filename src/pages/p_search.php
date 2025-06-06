@@ -103,7 +103,7 @@ class Search_Page {
 
         // Reviewers group
         if ($user->is_manager()) {
-            $this->checkbox_item(20, "pcconf", "PC conflicts");
+            $this->checkbox_item(20, "pcconf", "Committee conflicts");
             $this->checkbox_item(20, "allpref", "Review preferences");
         }
         if ($user->can_view_some_review_identity()) {

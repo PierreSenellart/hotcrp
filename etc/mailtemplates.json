@@ -53,10 +53,10 @@
 
 	{
 		"name": "newaccount.pc",
-		"subject": "[{{CONFSHORTNAME}}] Welcome to the program committee",
+		"subject": "[{{CONFSHORTNAME}}] Welcome to the committee",
 		"body": [
 			"Greetings,\n\n",
-			"You have been added to the program committee on the {{CONFNAME}} submission site.\n\n",
+			"You have been added to the committee on the {{CONFNAME}} submission site.\n\n",
 			"* Site: {{LINK}}\n",
 			"* Email: {{EMAIL}}\n\n",
 			"{{IF(NEEDPASSWORD)}}\n",
@@ -351,7 +351,7 @@
 		"allow_pc": true,
 		"body": [
 			"Dear {{NAME}},\n\n",
-			"On behalf of the {{CONFNAME}} program committee, {{REQUESTERCONTACT}} has asked you to review {{CONFSHORTNAME}} submission #{{PID}}.\n\n",
+			"On behalf of the {{CONFNAME}} committee, {{REQUESTERCONTACT}} has asked you to review {{CONFSHORTNAME}} submission #{{PID}}.\n\n",
 			"{{IF(REASON)}}\n",
 			"They supplied this note: {{REASON}}\n",
 			"{{ENDIF}}\n\n",
@@ -638,7 +638,7 @@
 		"default_recipients": "pc",
 		"subject": "[{{CONFSHORTNAME}}] Message",
 		"body": [
-			"Dear program committee,\n\n",
+			"Dear committee,\n\n",
 			"Your message here.\n\n",
 			"{{SIGNATURE}}\n{{LINK}}\n"
 		]
@@ -724,7 +724,7 @@
 		"subject": "[{{CONFSHORTNAME}}] Accepted submission #{{PID}} {{TITLEHINT}}",
 		"body": [
 			"Dear author(s),\n\n",
-			"The {{CONFNAME}} program committee is delighted to inform you that your submission #{{PID}} has been accepted to appear in the conference.\n\n",
+			"The {{CONFNAME}} committee is delighted to inform you that your submission #{{PID}} has been accepted to appear in the conference.\n\n",
 			"* Title: {{TITLE}}\n",
 			"* Author(s): {{OPT(AUTHORS)}}\n",
 			"* Site: {{LINK(paper, p={{PID}}, {{AUTHORVIEWCAPABILITY}})}}\n\n",
@@ -745,7 +745,7 @@
 		"subject": "[{{CONFSHORTNAME}}] Rejected submission #{{PID}} {{TITLEHINT}}",
 		"body": [
 			"Dear author(s),\n\n",
-			"The {{CONFNAME}} program committee is sorry to inform you that your submission #{{PID}} was rejected, and will not appear in the conference.\n\n",
+			"The {{CONFNAME}} committee is sorry to inform you that your submission #{{PID}} was rejected, and will not appear in the conference.\n\n",
 			"* Title: {{TITLE}}\n",
 			"* Author(s): {{OPT(AUTHORS)}}\n",
 			"* Site: {{LINK(paper, p={{PID}}, {{AUTHORVIEWCAPABILITY}})}}\n\n",

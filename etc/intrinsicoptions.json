@@ -72,7 +72,7 @@
         "configurable": true, "properties": ["name", "description", "condition", "exists_if", "edit_condition", "editable_if", "required", "min", "max"]
     },
     {
-        "name": "PC conflicts", "id": -1006,
+        "name": "Committee conflicts", "id": -1006,
         "type": "pc_conflicts", "include_empty": true,
         "json_key": "pc_conflicts",
         "visibility": "conflict",

@@ -45,13 +45,13 @@ class SubForm_SettingRenderer {
 
     static function print_conflicts(SettingValues $sv) {
         echo '<div id="foldpcconf" class="fold', $sv->vstr("sf_pc_conflicts") ? "o" : "c", "\">\n";
-        $sv->print_checkbox("sf_pc_conflicts", "Collect authors’ PC conflicts", ["class" => "uich js-foldup"]);
+        $sv->print_checkbox("sf_pc_conflicts", "Collect authors’ committee conflicts", ["class" => "uich js-foldup"]);
         $cflt = [];
         $confset = $sv->conf->conflict_set();
         foreach ($confset->basic_conflict_types() as $ct) {
             $cflt[] = "“" . $confset->unparse_html_description($ct) . "”";
         }
-        $sv->print_checkbox("sf_pc_conflict_types", "Collect PC conflict descriptions (" . commajoin($cflt, "or") . ")", ["group_class" => "fx"]);
+        $sv->print_checkbox("sf_pc_conflict_types", "Collect committee conflict descriptions (" . commajoin($cflt, "or") . ")", ["group_class" => "fx"]);
         $sv->print_checkbox("sf_collaborators", "Collect authors’ other conflicts and collaborators as text");
         echo "</div>\n";
 
@@ -59,7 +59,7 @@ class SubForm_SettingRenderer {
         $sv->print_message_minor("conflict_description", "Definition of conflict of interest");
 
         echo '<hr class="form-sep">',
-            $sv->label("conflict_visibility", "When can reviewers see PC conflict information?"),
+            $sv->label("conflict_visibility", "When can reviewers see committee conflict information?"),
             '&nbsp; ',
             $sv->select("conflict_visibility", [1 => "Never", 0 => "When authors or tracker are visible", 2 => "Always"]);
     }
