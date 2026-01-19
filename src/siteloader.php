@@ -18,7 +18,6 @@ class SiteLoader {
         "False_SearchTerm" => "src/searchterm.php",
         "Fexpr" => "src/formula.php",
         "FmtArg" => "lib/fmt.php",
-        "FormulaCall" => "src/formula.php",
         "FormatChecker" => "src/formatspec.php",
         "JsonSerializable" => "lib/json.php",
         "Limit_SearchTerm" => "src/searchterm.php",
@@ -32,6 +31,7 @@ class SiteLoader {
         "QrequestFile" => "lib/qrequest.php",
         "ReviewFieldInfo" => "src/reviewfield.php",
         "SearchSplitter" => "src/searchparser.php",
+        "SearchStringContext" => "src/papersearch.php",
         "StreamS3Result" => "lib/s3result.php",
         "TagAnno" => "lib/tagger.php",
         "TagInfo" => "lib/tagger.php",
@@ -271,7 +271,7 @@ class SiteLoader {
         $root = $root ?? self::$root;
         for ($i = 0; $i !== count($Opt["include"]); ++$i) {
             foreach (self::expand_includes($root, $Opt["include"][$i]) as $f) {
-                if (!in_array($f, $Opt["loaded"])) {
+                if (!in_array($f, $Opt["loaded"], true)) {
                     self::read_options_file($f);
                 }
             }

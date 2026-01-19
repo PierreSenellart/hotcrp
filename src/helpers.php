@@ -1,38 +1,20 @@
 <?php
 // helpers.php -- HotCRP non-class helper functions
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 // string helpers
-
-/** @param null|int|string $value
- * @return int
- * @deprecated */
-function cvtint($value, $default = -1) {
-    $v = trim((string) $value);
-    if (is_numeric($v)) {
-        $ival = intval($v);
-        if ($ival == floatval($v)) {
-            return $ival;
-        }
-    }
-    return $default;
-}
 
 /** @param null|int|string $s
  * @return ?int */
 function stoi($s) {
     if ($s === null || is_int($s)) {
         return $s;
-    }
-    $v = trim((string) $s);
-    if (!is_numeric($v)) {
+    } else if (!is_numeric($s)) {
         return null;
     }
-    $iv = intval($v);
-    if ($iv != floatval($v)) {
-        return null;
-    }
-    return $iv;
+    $iv = intval($s);
+    $fv = floatval($s);
+    return $iv == $fv ? $iv : null;
 }
 
 /** @param null|int|float|string $s
@@ -40,13 +22,11 @@ function stoi($s) {
 function stonum($s) {
     if ($s === null || is_int($s) || is_float($s)) {
         return $s;
-    }
-    $v = trim((string) $s);
-    if (!is_numeric($v)) {
+    } else if (!is_numeric($s)) {
         return null;
     }
-    $iv = intval($v);
-    $fv = floatval($v);
+    $iv = intval($s);
+    $fv = floatval($s);
     return $iv == $fv ? $iv : $fv;
 }
 
@@ -70,9 +50,8 @@ function unparse_number_pm_html($n) {
         return "−" . (-$n); // U+2212 MINUS
     } else if ($n > 0) {
         return "+" . $n;
-    } else {
-        return "0";
     }
+    return "0";
 }
 
 /** @param int|float $n
@@ -82,9 +61,8 @@ function unparse_number_pm_text($n) {
         return "-" . (-$n);
     } else if ($n > 0) {
         return "+" . $n;
-    } else {
-        return "0";
     }
+    return "0";
 }
 
 /** @param string $url
@@ -130,7 +108,7 @@ class JsonResult implements JsonSerializable, ArrayAccess {
                 $this->content = (array) $a2;
             }
         } else {
-            assert(is_associative_array($a2));
+            assert(is_array($a2) && !array_is_list($a2));
             $this->content = $a2;
         }
     }
@@ -211,8 +189,16 @@ class JsonResult implements JsonSerializable, ArrayAccess {
     }
 
 
-    /** @param int $status
+    /** @param int $code
      * @return $this */
+    function set_response_code($code) {
+        $this->status = $code;
+        return $this;
+    }
+
+    /** @param int $status
+     * @return $this
+     * @deprecated */
     function set_status($status) {
         $this->status = $status;
         return $this;
@@ -237,6 +223,11 @@ class JsonResult implements JsonSerializable, ArrayAccess {
     /** @return bool */
     function ok() {
         return $this->content["ok"];
+    }
+
+    /** @return int */
+    function response_code() {
+        return $this->status;
     }
 
     /** @param string $key
@@ -307,7 +298,7 @@ class JsonResult implements JsonSerializable, ArrayAccess {
         } else {
             $pprint = $this->pretty_print ?? true;
         }
-        echo json_encode_browser($this->content, $pprint ? JSON_PRETTY_PRINT : 0), "\n";
+        echo json_encode_browser($this->content, ($pprint ? JSON_PRETTY_PRINT : 0) | JSON_UNESCAPED_SLASHES), "\n";
     }
 
     /** @return never
@@ -325,16 +316,29 @@ class JsonResult implements JsonSerializable, ArrayAccess {
 class Redirection extends Exception {
     /** @var string */
     public $url;
-    /** @param string $url */
-    function __construct($url) {
+    /** @var int */
+    public $status;
+    /** @param string $url
+     * @param 301|302|303|307|308 $status */
+    function __construct($url, $status = 302) {
         parent::__construct("Redirect to {$url}");
         $this->url = $url;
+        $this->status = $status;
     }
 }
 
 class PageCompletion extends Exception {
-    function __construct() {
+    /** @var ?int */
+    public $status;
+    function __construct($status = null) {
         parent::__construct("Page complete");
+        $this->status = $status;
+    }
+    /** @param ?Qrequest $qreq */
+    function emit($qreq = null) {
+        if ($this->status !== null) {
+            http_response_code($this->status);
+        }
     }
 }
 
@@ -346,6 +350,10 @@ class JsonCompletion extends Exception {
     /** @param JsonResult $j */
     function __construct($j) {
         $this->result = $j;
+    }
+    /** @param ?Qrequest $qreq */
+    function emit($qreq = null) {
+        $this->result->emit($qreq);
     }
 }
 
@@ -388,6 +396,16 @@ function expander($open, $foldnum = null, $open_tooltip = null) {
     return $t . '</span>';
 }
 
+function aria_expander($c = "") {
+    return '<span class="' . Ht::add_tokens("expander", $c) . '" role="none"><span class="ifx">' . Icons::ui_triangle(2)
+        . '</span><span class="ifnx">' . Icons::ui_triangle(1) . '</span></span>';
+}
+
+function aria_plus_expander($c = "") {
+    $c = Ht::add_tokens("expander", $c);
+    return '<span class="' . Ht::add_tokens("expander", $c) . '" role="none"><span class="ifx">−</span><span class="ifnx">+</span></span>';
+}
+
 
 /** @param Contact|Author|ReviewInfo|CommentInfo $userlike
  * @return string */
@@ -407,7 +425,7 @@ function clean_tempdirs() {
     $dirh = opendir($dir);
     $now = time();
     while (($fname = readdir($dirh)) !== false) {
-        if (preg_match('/\Ahotcrptmp\d+\z/', $fname)
+        if (preg_match('/\Ahotcrptmp[.\w]+\z/', $fname)
             && is_dir("{$dir}/{$fname}")
             && ($mtime = @filemtime("{$dir}/{$fname}")) !== false
             && $mtime < $now - 1800)
@@ -629,15 +647,14 @@ function unparse_latin_ordinal($n) {
     assert($n >= 1);
     if ($n <= 26) {
         return chr($n + 64);
-    } else {
-        $t = "";
-        while (true) {
-            $t = chr((($n - 1) % 26) + 65) . $t;
-            if ($n <= 26) {
-                return $t;
-            }
-            $n = intval(($n - 1) / 26);
+    }
+    $t = "";
+    while (true) {
+        $t = chr((($n - 1) % 26) + 65) . $t;
+        if ($n <= 26) {
+            return $t;
         }
+        $n = intval(($n - 1) / 26);
     }
 }
 
@@ -646,9 +663,8 @@ function unparse_latin_ordinal($n) {
 function unparse_expertise($expertise) {
     if ($expertise === null) {
         return "";
-    } else {
-        return $expertise > 0 ? "X" : ($expertise == 0 ? "Y" : "Z");
     }
+    return $expertise > 0 ? "X" : ($expertise == 0 ? "Y" : "Z");
 }
 
 /** @param array{int,?int} $preference
@@ -684,6 +700,11 @@ function review_lead_icon() {
 /** @return string */
 function review_shepherd_icon() {
     return '<span class="rto rtshep" title="Shepherd"><span class="rti">S</span></span>';
+}
+
+/** @return string */
+function review_potential_conflict_icon() {
+    return '<span class="rto rtpotential" title="Potential conflict"><span class="rti">?</span></span>';
 }
 
 

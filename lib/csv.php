@@ -892,9 +892,8 @@ class CsvGenerator {
             return $quote_empty ? '""' : $text;
         } else if (preg_match('/\A[-_@\/\$+A-Za-z0-9.](?:[-_@\/\$+A-Za-z0-9. \t]*[-_@\/\$+A-Za-z0-9.]|)\z/', $text)) {
             return $text;
-        } else {
-            return self::always_quote($text);
         }
+        return self::always_quote($text);
     }
 
     /** @param list<string> $array
@@ -949,7 +948,7 @@ class CsvGenerator {
         return $this;
     }
 
-    /** @param list<int|string> $header
+    /** @param list<int|float|string>|array<int|string,string> $header
      * @return $this */
     function set_header($header) {
         assert(empty($this->lines) && ($this->flags & self::FLAG_FLUSHED) === 0);
@@ -1061,9 +1060,12 @@ class CsvGenerator {
             $this->stream = false;
             if (($this->flags & self::FLAG_EMIT_LIVE) !== 0) {
                 $this->stream = fopen("php://output", "wb");
-            } else if (($x = Filer::tempfile("csvtmp-" . time() . "-%08d.csv", Conf::$main))) {
-                $this->stream = $x[0];
-                $this->stream_filename = $x[1];
+            } else {
+                $tempdir = Conf::$main ? Conf::$main->docstore_tempdir() : null;
+                if (($finfo = Filer::create_tempfile($tempdir, "csvtmp-%s.csv"))) {
+                    $this->stream_filename = $finfo[0];
+                    $this->stream = $finfo[1];
+                }
             }
         }
         if ($this->stream === false) {
@@ -1163,7 +1165,7 @@ class CsvGenerator {
         if (!$this->selection
             || empty($row)
             || ($this->selection_is_names
-                && !is_associative_array($row)
+                && (!is_array($row) || array_is_list($row))
                 && count($row) <= count($this->selection))) {
             return $row;
         }

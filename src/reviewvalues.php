@@ -76,7 +76,6 @@ class ReviewValues extends MessageSet {
             $this->conf = $rf;
             $this->rf = $this->conf->review_form();
         }
-        $this->set_want_ftext(true);
         $this->clear_req();
     }
 
@@ -240,13 +239,16 @@ class ReviewValues extends MessageSet {
                     if ($nfields > 0) {
                         break;
                     }
-                } else if (preg_match('/\A==\+== (?:Paper|Submission) #?(\d+)/i', $line, $match)) {
+                } else if (preg_match('/\A==\+== (?:Paper|Submission) \#?(\d+)/i', $line, $match)) {
                     if ($nfields > 0) {
                         break;
+                    } else if (($pid = stoi($match[1])) === null || $pid === 0) {
+                        $this->rvmsg(self::ERROR, "paperId", "<0>Invalid submission ID");
+                    } else {
+                        $this->req["paperId"] = $pid;
+                        $this->req["blind"] = 1;
+                        $this->first_lineno = $this->field_lineno["paperId"] = $this->lineno;
                     }
-                    $this->req["paperId"] = intval($match[1]);
-                    $this->req["blind"] = 1;
-                    $this->first_lineno = $this->field_lineno["paperId"] = $this->lineno;
                 } else if (preg_match('/\A==\+== Reviewer:\s*(.*?)\s*\z/', $line, $match)
                            && ($user = Text::split_name($match[1], true))
                            && $user[2]) {
@@ -268,9 +270,10 @@ class ReviewValues extends MessageSet {
                     $this->req["ready"] = true;
                 } else if (preg_match('/\A==\+== Open Review\s*\z/i', $line)) {
                     $this->req["blind"] = 0;
-                } else if (preg_match('/\A==\+== Version\s*(\d+)\s*\z/i', $line, $match)) {
-                    if (($this->req["edit_version"] ?? 0) < intval($match[1])) {
-                        $this->req["edit_version"] = intval($match[1]);
+                } else if (preg_match('/\A==\+== Version\s*(\d+)\s*\z/i', $line, $match)
+                           && ($ev = stoi($match[1])) !== null) {
+                    if (($this->req["edit_version"] ?? 0) < $ev) {
+                        $this->req["edit_version"] = $ev;
                     }
                 } else if (preg_match('/\A==\+== Review Readiness\s*/i', $line)) {
                     $field = "readiness";
@@ -347,9 +350,8 @@ class ReviewValues extends MessageSet {
             return true;
         } else if ($x === "nonblind" || $x === "nonanonymous") {
             return false;
-        } else {
-            return null;
         }
+        return null;
     }
 
     /** @param mixed $x
@@ -361,9 +363,8 @@ class ReviewValues extends MessageSet {
             return true;
         } else if ($x === "unready" || $x === "draft") {
             return false;
-        } else {
-            return null;
         }
+        return null;
     }
 
     /** @param mixed $x
@@ -373,9 +374,8 @@ class ReviewValues extends MessageSet {
             return $v ? "approved" : false;
         } else if ($x === "approved" || $x === "submitted") {
             return $x;
-        } else {
-            return null;
         }
+        return null;
     }
 
     /** @return bool */
@@ -531,8 +531,8 @@ class ReviewValues extends MessageSet {
             } else if ($k === "edit_version") {
                 $this->req[$k] = stoi($v) ?? -1;
             } else if ($k === "if_vtag_match") {
-                if (ctype_digit($v)) {
-                    $this->req[$k] = intval($v);
+                if (ctype_digit($v) && ($iv = stoi($v)) !== null) {
+                    $this->req[$k] = $iv;
                 }
             } else if (str_starts_with($k, "has_")) {
                 $hasreqs[] = substr($k, 4);
@@ -695,11 +695,12 @@ class ReviewValues extends MessageSet {
                                          $allow_new_submit, $approvable) {
         $oldstatus = $rrow->reviewStatus;
         $olddelivered = $oldstatus >= ReviewInfo::RS_DELIVERED;
+        $nonempty = $view_score > VIEWSCORE_EMPTY;
         if ($olddelivered
             && (!$this->can_unsubmit
                 || !$user->can_administer($prow))) {
             $minstatus = $oldstatus;
-        } else if ($view_score > VIEWSCORE_EMPTY
+        } else if ($nonempty
                    || $rrow->reviewModified > 1) {
             $minstatus = ReviewInfo::RS_DRAFTED;
         } else if ($user->is_my_review($rrow)
@@ -720,11 +721,15 @@ class ReviewValues extends MessageSet {
                 $maxstatus = ReviewInfo::RS_COMPLETED;
             } else if ($approval === "approved") {
                 $maxstatus = ReviewInfo::RS_APPROVED;
-            } else {
+            } else if ($nonempty) {
                 $maxstatus = ReviewInfo::RS_DELIVERED;
+            } else {
+                $maxstatus = $oldstatus;
             }
-        } else {
+        } else if ($nonempty) {
             $maxstatus = ReviewInfo::RS_COMPLETED;
+        } else {
+            $maxstatus = $oldstatus;
         }
         return max($maxstatus, $minstatus);
     }
@@ -1414,9 +1419,8 @@ class ReviewValues extends MessageSet {
             return MessageSet::ERROR;
         } else if ($this->has_problem() || $this->finished === 1) {
             return MessageSet::WARNING;
-        } else {
-            return MessageSet::SUCCESS;
         }
+        return MessageSet::SUCCESS;
     }
 
     function report() {

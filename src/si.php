@@ -99,6 +99,9 @@ class Si {
     /** @var ?bool
      * @readonly */
     public $autogrow;
+    /** @var ?bool
+     * @readonly */
+    public $spellcheck;
     /** @var 0|1|2|3
      * @readonly */
     public $json;
@@ -128,6 +131,7 @@ class Si {
         "placeholder" => "is_string",
         "required" => "is_bool",
         "size" => "is_int",
+        "spellcheck" => "is_bool",
         "subtype" => "is_string",
         "summary" => "is_string",
         "title" => "is_string",
@@ -489,7 +493,7 @@ class Si {
             }
             $t = $member_tags ? $this->member_tags : $this->tags;
             return $t !== null
-                && in_array(substr($expr->text, 1), $t);
+                && in_array(substr($expr->text, 1), $t, true);
         }
         if ($expr->text === "id") {
             return $this->name_parts !== null
@@ -558,7 +562,7 @@ class Si {
         if ($this->pages === null && !$this->_has_pages) {
             $this->_collect_pages();
         }
-        return in_array($t, $this->pages ?? []);
+        return in_array($t, $this->pages ?? [], true);
     }
 
     /** @return bool */

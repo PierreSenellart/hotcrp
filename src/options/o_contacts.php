@@ -82,7 +82,6 @@ class Contacts_PaperOption extends PaperOption {
             }
         }
         $ps->checkpoint_conflict_values();
-        return true;
     }
     /** @param list<Author> $specau */
     private function apply_parsed_users(PaperValue $ov, $specau) {
@@ -128,8 +127,9 @@ class Contacts_PaperOption extends PaperOption {
             $name = simplify_whitespace((string) $qreq["contacts:{$n}:name"]);
             $affiliation = simplify_whitespace((string) $qreq["contacts:{$n}:affiliation"]);
             $au = Author::make_keyed(["email" => $email, "name" => $name, "affiliation" => $affiliation]);
-            // XXX has_contacts:{$n}:active
-            $au->conflictType = $qreq["contacts:{$n}:active"] ? CONFLICT_CONTACTAUTHOR : 0;
+            $active = friendly_boolean($qreq["contacts:{$n}:active"])
+                ?? !isset($qreq["has_contacts:{$n}:active"]);
+            $au->conflictType = $active ? CONFLICT_CONTACTAUTHOR : 0;
             $au->author_index = $n;
             $reqau[] = $au;
             if (validate_email($email)) {
@@ -145,11 +145,11 @@ class Contacts_PaperOption extends PaperOption {
         $ov->set_anno("req_users", $reqau);
         return $ov;
     }
-    function parse_json(PaperInfo $prow, $j) {
+    function parse_json_user(PaperInfo $prow, $j, Contact $user) {
         $ov = PaperValue::make_force($prow, $this);
         // collect values
         $reqau = [];
-        if (is_object($j) || is_associative_array($j)) {
+        if (is_object($j) || (is_array($j) && !array_is_list($j))) {
             foreach ((array) $j as $k => $v) {
                 if (is_bool($v)) {
                     $reqau[] = $au = Author::make_email($k);
@@ -235,7 +235,9 @@ class Contacts_PaperOption extends PaperOption {
         }
         usort($curau, $this->conf->user_comparator());
 
-        $pt->print_editable_option_papt($this, null, ["id" => "contacts", "for" => false]);
+        $pt->print_editable_option_papt($this, null, [
+            "id" => "contacts", "for" => false, "fieldset" => true
+        ]);
         echo '<div class="papev"><div id="contacts:container">';
 
         $reqau = $reqov->anno("req_users") ?? [];
@@ -262,7 +264,7 @@ class Contacts_PaperOption extends PaperOption {
                 || ($au->contactId === $pt->user->contactId
                     && $ov->prow->paperId <= 0)) {
                 echo Ht::hidden("contacts:{$cidx}:active", 1),
-                    Ht::checkbox(null, 1, true, ["disabled" => true, "id" => "contacts:{$cidx}:placeholder"]);
+                    Ht::checkbox("", "", true, ["disabled" => true, "id" => "contacts:{$cidx}:placeholder"]);
             } else {
                 $dchecked = $au->contactId > 0 && $au->conflictType >= CONFLICT_AUTHOR;
                 echo Ht::hidden("has_contacts:{$cidx}:active", 1),
@@ -290,7 +292,7 @@ class Contacts_PaperOption extends PaperOption {
         self::echo_editable_newcontact_row($pt, '$', null, null);
         echo '</template><div class="ug">',
             Ht::button("Add contact", ["class" => "ui row-order-append", "data-rowset" => "contacts:container", "data-row-template" => "contacts:row-template"]),
-            "</div></div></div>\n\n";
+            "</div></div></fieldset>\n\n";
     }
     // XXX no render because paper strip
 }

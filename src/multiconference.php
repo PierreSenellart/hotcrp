@@ -1,6 +1,6 @@
 <?php
 // multiconference.php -- HotCRP multiconference installations
-// Copyright (c) 2006-2024 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 class Multiconference {
     /** @var array<string,?Conf> */
@@ -112,16 +112,17 @@ class Multiconference {
         return $newconf;
     }
 
-    /** @param 403|404|array{title?:string,link?:bool}|Qrequest|MessageItem|FailureReason|string|null ...$arg
+    /** @param 403|404|array{title?:string,link?:bool,action_bar?:string}|Qrequest|MessageItem|FailureReason|string|null ...$arg
      * @return never */
     static function fail(...$arg) {
         global $Opt;
 
         $qreq = null;
-        $mis1 = [];
+        $mis = [];
         $title = "";
         $status = 404;
         $link = null;
+        $action_bar = "";
         $fr = null;
         foreach ($arg as $x) {
             if ($x === null) {
@@ -129,28 +130,34 @@ class Multiconference {
             } else if (is_int($x)) {
                 $status = $x;
             } else if (is_string($x)) {
-                $mis1[] = MessageItem::error($x);
+                $mis[] = MessageItem::error($x);
             } else if ($x instanceof MessageItem) {
-                $mis1[] = $x;
+                $mis[] = $x;
             } else if ($x instanceof Qrequest) {
                 $qreq = $x;
             } else if ($x instanceof FailureReason) {
                 assert(!$fr);
-                $mis1[] = $fr = $x;
+                $fr = $x;
+                if (PHP_SAPI !== "cli"
+                    && $qreq->page() !== "api"
+                    && !friendly_boolean($_GET["ajax"] ?? null)) {
+                    $fr->set("expand", true);
+                }
+                array_push($mis, ...$fr->message_list());
             } else {
                 assert(is_array($x));
                 $title = $x["title"] ?? $title;
                 $link = $x["link"] ?? $link;
+                $action_bar = $x["action_bar"] ?? $action_bar;
             }
         }
 
         $maintenance = $Opt["maintenance"] ?? null;
-        if ($maintenance) {
+        if ($maintenance && empty($mis)) {
             $status = 503;
             $title = "Maintenance";
-            $mis = [MessageItem::error(Ftext::concat("<0>The site is down for maintenance. ", is_string($maintenance) ? $maintenance : "<0>Please check back later."))];
+            $mis[] = MessageItem::error(Ftext::concat("<0>The site is down for maintenance. ", is_string($maintenance) ? $maintenance : "<0>Please check back later."));
             $link = false;
-            $fr = null;
         }
 
         $qreq = $qreq ?? Qrequest::$main_request ?? Qrequest::make_minimal();
@@ -159,27 +166,6 @@ class Multiconference {
         }
         if ($link === false) {
             $qreq->set_user(null);
-        }
-
-        // maybe expand FailureReason
-        if ($fr) {
-            if (PHP_SAPI !== "cli"
-                && $qreq->page() !== "api"
-                && !friendly_boolean($_GET["ajax"] ?? null)) {
-                $fr->set("expand", true);
-            }
-            $mis = [];
-            foreach ($mis1 as $x) {
-                if ($x instanceof FailureReason) {
-                    foreach ($x->message_list() as $mi) {
-                        $mis[] = $mi;
-                    }
-                } else {
-                    $mis[] = $x;
-                }
-            }
-        } else {
-            $mis = $mis1;
         }
 
         // print message
@@ -192,7 +178,7 @@ class Multiconference {
             http_response_code($status);
             header("Content-Type: application/json; charset=utf-8");
             $j = ["ok" => false, "message_list" => $mis];
-            if ($maintenance) {
+            if ($maintenance && $status === 503) {
                 $j["maintenance"] = true;
             }
             echo json_encode_browser($j), "\n";
@@ -200,9 +186,11 @@ class Multiconference {
         }
 
         http_response_code($status);
-        $qreq->print_header($title, "", ["action_bar" => "", "body_class" => "body-error"]);
+        $qreq->print_header($title, "", [
+            "action_bar" => $action_bar, "body_class" => "body-error"
+        ]);
         $mis[0] = $mis[0] ?? MessageItem::error("<0>Internal error");
-        if ($link && $mis[0]->status >= 2) {
+        if ($link && $mis[0]->status >= 2 && $qreq->page() !== "index") {
             if (!is_string($link)) {
                 $link = Conf::$main->hoturl_raw("index");
             }
@@ -213,28 +201,35 @@ class Multiconference {
         exit(0);
     }
 
-    /** @return Qrequest */
-    static private function make_qrequest() {
-        if (Qrequest::$main_request) {
-            return Qrequest::$main_request;
-        }
-        $qreq = (new Qrequest("GET"))->set_navigation(Navigation::get());
-        if (Contact::$main_user) {
-            $qreq->set_user(Contact::$main_user);
+    /** @param Contact $user
+     * @param Qrequest $qreq
+     * @param array $rest
+     * @return never */
+    static function fail_user_disabled($user, $qreq, $rest = []) {
+        $args = [new FmtArg("email", $user->email, 0)];
+        if ($user->is_deleted()) {
+            $e = "account_deleted";
+            $t = "Account deleted";
+        } else if ($user->is_empty()) {
+            $e = "signin_required";
+            $t = "";
+            $args[] = new FmtArg("url", $user->conf->hoturl_raw("signin"), 0);
+            $args[] = new FmtArg("expand", true);
         } else {
-            global $Opt;
-            $qreq->set_conf(Conf::$main ?? new Conf($Opt, false));
+            $e = "account_disabled";
+            $t = "Account disabled";
         }
-        return $qreq;
+        $rest["title"] = $rest["title"] ?? $t;
+        $rest["link"] = $rest["link"] ?? true;
+        Multiconference::fail($qreq, 403, $rest, $user->conf->_i($e, ...$args));
     }
 
     /** @return string */
     static private function nonexistence_error() {
         if (PHP_SAPI === "cli") {
             return "Conference ID missing, `-n CONFID` required";
-        } else {
-            return "Conference not found";
         }
+        return "Conference not found";
     }
 
     /** @return never */

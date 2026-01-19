@@ -28,6 +28,8 @@ class SavePapers_Batch {
     /** @var bool */
     public $any_content_file = false;
     /** @var bool */
+    public $ignore_content_file = false;
+    /** @var bool */
     public $reviews = false;
     /** @var bool */
     public $add_topics = false;
@@ -85,6 +87,7 @@ class SavePapers_Batch {
         }
         $this->disable_users = isset($arg["disable-users"]);
         $this->any_content_file = isset($arg["any-content-file"]);
+        $this->ignore_content_file = isset($arg["ignore-content-file"]);
         $this->add_topics = isset($arg["add-topics"]);
         $this->reviews = isset($arg["r"]);
         $this->skip_document_verify = isset($arg["skip-document-verify"]);
@@ -141,10 +144,10 @@ class SavePapers_Batch {
             && str_starts_with($content, "\x50\x4B\x03\x04")) {
             if (!($tmpdir = tempdir())) {
                 throw new CommandLineException("{$this->errprefix}Cannot create temporary directory");
-            } else if (file_put_contents("{$tmpdir}/data.zip", $content) !== strlen($content)) {
-                throw new CommandLineException("{$this->errprefix}{$tmpdir}/data.zip: Cannot write file");
+            } else if (file_put_contents("{$tmpdir}data.zip", $content) !== strlen($content)) {
+                throw new CommandLineException("{$this->errprefix}{$tmpdir}data.zip: Cannot write file");
             }
-            $this->set_zipfile("{$tmpdir}/data.zip");
+            $this->set_zipfile("{$tmpdir}data.zip");
             $content = null;
         }
 
@@ -224,6 +227,7 @@ class SavePapers_Batch {
         $this->ps = $this->ps ?? (new PaperStatus($this->user))
             ->set_disable_users($this->disable_users)
             ->set_any_content_file($this->any_content_file)
+            ->set_ignore_content_file($this->ignore_content_file)
             ->set_notify($this->notify)
             ->set_skip_document_verify($this->skip_document_verify)
             ->set_skip_document_content($this->skip_document_content)
@@ -231,6 +235,7 @@ class SavePapers_Batch {
 
         if ($this->ps->prepare_save_paper_json($j)) {
             if ($this->dry_run) {
+                $this->ps->abort_save();
                 $action = $this->ps->has_change() ? "changed" : "unchanged";
                 $pid = true;
             } else {
@@ -255,7 +260,9 @@ class SavePapers_Batch {
         // XXX does not change decision
         if (!$this->silent || !$pid) {
             foreach ($this->ps->decorated_message_list() as $mi) {
-                fwrite(STDERR, $prefix . $mi->message_as(0) . "\n");
+                if ($mi->message !== "") {
+                    fwrite(STDERR, $prefix . $mi->message_as(0) . "\n");
+                }
             }
         }
         if (!$pid) {
@@ -287,7 +294,9 @@ class SavePapers_Batch {
             }
             if (!$this->silent) {
                 foreach ($this->tf->message_list() as $mi) {
-                    fwrite(STDERR, $prefix . $mi->message_as(0) . "\n");
+                    if ($mi->message !== "") {
+                        fwrite(STDERR, $prefix . $mi->message_as(0) . "\n");
+                    }
                 }
             }
             $this->tf->clear_messages();
@@ -324,7 +333,7 @@ class SavePapers_Batch {
             }
         }
 
-        $this->conf->delay_logs();
+        $this->conf->pause_log();
         for ($index = 0; $index !== count($jl); ++$index) {
             $j = $jl[$index];
             $jl[$index] = null;
@@ -334,11 +343,11 @@ class SavePapers_Batch {
             }
             gc_collect_cycles();
             if ($index % 10 === 9) {
-                $this->conf->release_logs();
-                $this->conf->delay_logs();
+                $this->conf->resume_log();
+                $this->conf->pause_log();
             }
         }
-        $this->conf->release_logs();
+        $this->conf->resume_log();
     }
 
     /** @param list<object> $jl */
@@ -399,6 +408,7 @@ class SavePapers_Batch {
             "disable-users,disable Disable newly created users",
             "notify,N Notify new users via email (off by default)",
             "any-content-file Allow any `content_file` in documents",
+            "ignore-content-file Ignore `content_file` in documents",
             "ignore-pid Ignore `pid` JSON elements",
             "match-title Match papers by title if no `pid`",
             "add-topics Add all referenced topics to conference",

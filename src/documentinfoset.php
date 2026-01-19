@@ -47,8 +47,10 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
     private $_filename;
     /** @var string */
     private $_mimetype = "application/zip";
-    /** @var ?string|false */
-    private $_tmpdir;
+    /** @var bool */
+    private $_have_tempdir = false;
+    /** @var ?string */
+    private $_tempdir;
     /** @var ?list<string> */
     private $_dirfn;
     /** @var ?string */
@@ -92,18 +94,19 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
             }
             while ($slash !== false) {
                 $dir = substr($fn, 0, $slash);
-                if (in_array($dir, $this->ufn)) {
+                if (in_array($dir, $this->ufn, true)) {
                     return $this->_add_fail($doc, $fn);
-                } else if (!in_array($dir, $this->_dirfn ?? [])) {
+                }
+                if (!in_array($dir, $this->_dirfn ?? [], true)) {
                     $this->_dirfn[] = $dir;
                 }
                 $slash = strpos($fn, "/", $slash + 1);
             }
-            if ($this->_dirfn !== null && in_array($fn, $this->_dirfn)) {
+            if ($this->_dirfn !== null && in_array($fn, $this->_dirfn, true)) {
                 return $this->_add_fail($doc, $fn);
             }
         }
-        while ($fn !== "" && in_array($fn, $this->ufn)) {
+        while ($fn !== "" && in_array($fn, $this->ufn, true)) {
             if (preg_match('/\A(.*\()(\d+)(\)(?:\.\w+|))\z/', $fn, $m)) {
                 $fn = $m[1] . ((int) $m[2] + 1) . $m[3];
             } else if (preg_match('/\A(.*?)(\.\w+|)\z/', $fn, $m) && $m[1] !== "") {
@@ -184,7 +187,7 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
     function offsetExists($offset) {
         return is_int($offset)
             ? isset($this->docs[$offset])
-            : $offset !== "" && in_array($offset, $this->ufn);
+            : $offset !== "" && in_array($offset, $this->ufn, true);
     }
     #[\ReturnTypeWillChange]
     /** @param int|string $offset
@@ -215,7 +218,7 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
     }
     /** @return MessageSet */
     function message_set() {
-        $this->_ms = $this->_ms ?? (new MessageSet)->set_want_ftext(true, 5);
+        $this->_ms = $this->_ms ?? new MessageSet;
         return $this->_ms;
     }
     /** @return list<MessageItem> */
@@ -235,13 +238,15 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
         }
     }
 
-    /** @return string|false */
-    private function _tmpdir() {
-        if ($this->_tmpdir === null
-            && ($this->_tmpdir = tempdir()) === false) {
-            $this->error("<0>Could not create temporary directory");
+    /** @return ?string */
+    private function _tempdir() {
+        if (!$this->_have_tempdir) {
+            $this->_have_tempdir = true;
+            if (!($this->_tempdir = tempdir())) {
+                $this->error("<0>Could not create temporary directory");
+            }
         }
-        return $this->_tmpdir;
+        return $this->_tempdir;
     }
     private function _hotzip_progress() {
         // assign local headers
@@ -429,9 +434,18 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
         return $this->_signature;
     }
 
+    /** @return int */
+    private function last_modified() {
+        $t = $this->_message_timestamp;
+        foreach ($this->docs as $doc) {
+            $t = max($t, $doc->timeReferenced ?? $doc->timestamp);
+        }
+        return $t;
+    }
+
     /** @return ?DocumentInfo */
     function make_zip_document() {
-        if (($dstore_tmp = Filer::docstore_tempdir($this->conf))) {
+        if (($dstore_tmp = $this->conf->docstore_tempdir())) {
             $this->_filestore = $dstore_tmp . $this->content_signature() . ".zip";
             // maybe zipfile with that signature already exists
             if (file_exists($this->_filestore)) {
@@ -444,11 +458,11 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
 
         // otherwise, need to create new .zip
         if (!$this->_filestore) {
-            if (!($tmpdir = $this->_tmpdir())) {
+            if (!($tempdir = $this->_tempdir())) {
                 $this->error("<0>Cannot create temporary directory");
                 return null;
             }
-            $this->_filestore = "{$tmpdir}/_hotcrp.zip";
+            $this->_filestore = "{$tempdir}_hotcrp.zip";
         }
 
         if (!($out = fopen("{$this->_filestore}~", "wb"))) {
@@ -563,14 +577,15 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
             return false;
         }
 
-        $dopt->etag = "\"" . $this->content_signature() . "\"";
+        $dopt->set_mimetype(Mimetype::type_with_charset($this->_mimetype));
+        $dopt->set_etag("\"" . $this->content_signature() . "\"");
+        $dopt->set_last_modified($this->last_modified());
         if (!$dopt->check_match()) {
             return true;
         }
 
         $this->_hotzip_make();
         $dopt->set_content_length($this->_hotzip_filesize());
-        $dopt->set_mimetype(Mimetype::type_with_charset($this->_mimetype));
         if (!$dopt->check_ranges()) {
             return true;
         }
@@ -582,11 +597,9 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
         if ($dopt->range === null) {
             $dopt->set_filename($this->_filename);
         }
-        if ($dopt->cacheable) {
-            $dopt->header("Cache-Control: max-age=315576000, private");
-            $dopt->header("Expires: " . gmdate("D, d M Y H:i:s", Conf::$now + 315576000) . " GMT");
-        }
-        if ($dopt->log_user && $dopt->range_overlaps(0, 4096)) {
+        if ($dopt->log_user
+            && $dopt->range_overlaps(0, 4096)
+            && !$dopt->head) {
             DocumentInfo::log_download_activity($this->as_list(), $dopt->log_user);
         }
         $dopt->set_content_function([$this, "write_range"]);
@@ -594,20 +607,12 @@ class DocumentInfoSet implements ArrayAccess, IteratorAggregate, Countable {
     }
 
     /** @param ?Downloader $dopt
-     * @return bool */
+     * @return int */
     function emit($dopt = null) {
         $dopt = $dopt ?? new Downloader;
         if (!$this->prepare_download($dopt)) {
-            return false;
+            return 500;
         }
-        $dopt->emit();
-        return true;
-    }
-
-    /** @param ?Downloader $dopt
-     * @return bool
-     * @deprecated */
-    function download($dopt = null) {
-        return $this->emit($dopt);
+        return $dopt->emit();
     }
 }

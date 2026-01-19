@@ -16,6 +16,14 @@ if (!function_exists("array_find")) {
     }
 }
 
+if (!function_exists("array_is_list")) {
+    /** @param array $array
+     * @return bool */
+    function array_is_list($array) {
+        return array_values($array) === $array;
+    }
+}
+
 if (!function_exists("str_starts_with")) {
     /** @param string $haystack
      * @param string $needle
@@ -91,6 +99,20 @@ if (!function_exists("json_validate")) {
 if (!function_exists("normalizer_normalize")) {
     function normalizer_normalize($text) {
         return $text; /* XXX */
+    }
+}
+
+if (!function_exists("openssl_cipher_key_length")) {
+    /** @param string $cipher
+     * @return int|false */
+    function openssl_cipher_key_length($cipher) {
+        if (!in_array($cipher, openssl_get_cipher_methods())) {
+            // XXX should warn
+            return false;
+        } else if (preg_match('/\A(?:aes-|aria-|camellia-)(128|192|256)(?:-cbc|-cbc-hmac.*|-ccm|-cfb.*|-ctr|-ecb|-gcm|-ocb|-ofb|-wrap|-wrap-pad)\z/', $cipher, $m)) {
+            return (int) $m[1] / 8;
+        }
+        return 0; /* XXX */
     }
 }
 

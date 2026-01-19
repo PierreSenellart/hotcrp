@@ -26,7 +26,7 @@ class Paper_API extends MessageSet {
     /** @var ?Qrequest */
     private $attachment_qreq;
     /** @var ?string */
-    private $docdir;
+    private $ziparchive_docdir;
 
     /** @var list<list<string>> */
     private $change_lists = [];
@@ -131,8 +131,7 @@ class Paper_API extends MessageSet {
 
         // check Content-Type
         $ct = $qreq->body_content_type();
-        $ct_form = $ct === "application/x-www-form-urlencoded"
-            || $ct === "multipart/form-data";
+        $ct_form = Mimetype::is_form($ct);
         if ($ct_form && !$this->post_form_is_json($qreq)) {
             // handle form-encoded data
             if (($mode & self::M_ONE) !== 0) {
@@ -167,7 +166,7 @@ class Paper_API extends MessageSet {
             if ($ec !== true) {
                 return JsonResult::make_error(400, "<0>ZIP error " . json_encode($ec));
             }
-            list($this->docdir, $jsonname) = self::analyze_zip_contents($this->ziparchive);
+            list($this->ziparchive_docdir, $jsonname) = self::analyze_zip_contents($this->ziparchive);
             if (!$jsonname) {
                 return JsonResult::make_error(400, "<0>ZIP `data.json` not found");
             }
@@ -215,9 +214,8 @@ class Paper_API extends MessageSet {
             return JsonResult::make_permission_error();
         } else if ($mode === self::M_MATCH) {
             return $this->run_post_match_json($qreq, $jp);
-        } else {
-            return $this->run_post_multi_json($jp);
         }
+        return $this->run_post_multi_json($jp);
     }
 
     private function set_post_param(Qrequest $qreq) {
@@ -355,6 +353,8 @@ class Paper_API extends MessageSet {
     private function execute_save($ok, $ps) {
         if ($ok && !$this->dry_run) {
             $ok = $ps->execute_save();
+        } else {
+            $ps->abort_save();
         }
         foreach ($ps->message_list() as $mi) {
             if ($mi->field
@@ -500,32 +500,39 @@ class Paper_API extends MessageSet {
     }
 
 
+    /** @param string $fname
+     * @return bool */
+    static function should_skip_zip_filename($fname) {
+        return preg_match('/(?:\A|\/)(?:__MACOSX|\.[^\/]*+|\$RECYCLE\.BIN|\#[^\/]*\#|[^\/]*~)(?:\z|\/)/', $fname);
+    }
+
     /** @return array{string,?string} */
     static function analyze_zip_contents($zip) {
         // find common directory prefix
         $dirpfx = null;
+        $xjsons = [];
         for ($i = 0; $i < $zip->numFiles; ++$i) {
             $name = $zip->getNameIndex($i);
+            if (self::should_skip_zip_filename($name)) {
+                continue;
+            }
             if ($dirpfx === null) {
                 $xslash = (int) strrpos($name, "/");
-                $dirpfx = $xslash ? substr($name, 0, $xslash + 1) : "";
+                $dirpfx = $xslash > 0 ? substr($name, 0, $xslash + 1) : "";
             }
             while ($dirpfx !== "" && !str_starts_with($name, $dirpfx)) {
-                $xslash = (int) strrpos($dirpfx, "/", -1);
-                $dirpfx = $xslash ? substr($dirpfx, 0, $xslash + 1) : "";
+                $xslash = (int) strrpos($dirpfx, "/", -2);
+                $dirpfx = $xslash > 0 ? substr($dirpfx, 0, $xslash + 1) : "";
             }
-            if ($dirpfx === "") {
-                break;
+            if (str_ends_with($name, ".json")) {
+                $xjsons[] = $name;
             }
         }
 
         // find JSONs
         $datas = $jsons = [];
-        for ($i = 0; $i < $zip->numFiles; ++$i) {
-            $name = $zip->getNameIndex($i);
-            if (!str_ends_with($name, ".json")
-                || strpos($name, "/", strlen($dirpfx)) !== false
-                || $name[strlen($dirpfx)] === ".") {
+        foreach ($xjsons as $name) {
+            if (strpos($name, "/", strlen($dirpfx)) !== false) {
                 continue;
             }
             $jsons[] = $name;
@@ -613,7 +620,7 @@ class Paper_API extends MessageSet {
         }
         if (is_string($docj->content_file)) {
             if ($this->ziparchive) {
-                return self::apply_zip_content_file($docj, $this->docdir . $docj->content_file, $this->ziparchive, $o, $pstatus);
+                return self::apply_zip_content_file($docj, $this->ziparchive_docdir . $docj->content_file, $this->ziparchive, $o, $pstatus);
             } else if ($this->attachment_qreq
                        && ($qf = $this->attachment_qreq->file($docj->content_file))) {
                 return self::apply_qrequest_file($docj, $qf);

@@ -1,6 +1,6 @@
 <?php
 // backupdb.php -- HotCRP database backup script
-// Copyright (c) 2006-2023 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
 
 if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
     require_once(dirname(__DIR__) . "/src/init.php");
@@ -20,6 +20,9 @@ class BackupDB_Batch {
     public $verbose;
     /** @var bool */
     public $compress;
+    /** @var bool
+     * @readonly */
+    public $raw;
     /** @var bool
      * @readonly */
     public $schema;
@@ -85,6 +88,8 @@ class BackupDB_Batch {
     private $_deflatebuf;
     /** @var ?string */
     private $_s3_tmp;
+    /** @var array<string,string> */
+    private $_s3_tags;
     /** @var bool */
     private $_has_dblink = false;
     /** @var ?\mysqli */
@@ -147,11 +152,15 @@ class BackupDB_Batch {
 
         $this->verbose = isset($arg["V"]);
         $this->compress = isset($arg["z"]);
+        $this->raw = isset($arg["raw"]);
         $this->schema = isset($arg["schema"]);
         $this->skip_ephemeral = isset($arg["no-ephemeral"]);
         $this->single_transaction = true;
         $this->tablespaces = isset($arg["tablespaces"]);
         $this->count = $arg["count"] ?? 1;
+        if ($this->raw && ($this->schema || $this->skip_ephemeral)) {
+            $this->throw_error("`--raw` and `--schema`/`--no-ephemeral` conflict");
+        }
 
         $this->pc_only = isset($arg["pc"]);
         $this->only_tables = $arg["only"] ?? [];
@@ -195,6 +204,15 @@ class BackupDB_Batch {
         if ($this->_before === false || $this->_after === false) {
             $this->throw_error("Bad time format");
         }
+        foreach ($arg["s3-tag"] ?? [] as $tp) {
+            if (($eq = strpos($tp, "=")) === false
+                || !is_valid_utf8($tp)
+                || UnicodeHelper::utf16_strlen(substr($tp, 0, $eq)) > 127
+                || UnicodeHelper::utf16_strlen(substr($tp, $eq + 1)) > 255) {
+                throw new CommandLineException("Bad `--s3-tag`");
+            }
+            $this->_s3_tags[substr($tp, 0, $eq)] = substr($tp, $eq + 1);
+        }
 
         foreach (["restore", "s3-list", "s3-get", "s3-put", "s3-restore"] as $i => $key) {
             if (isset($arg[$key]))
@@ -231,11 +249,11 @@ class BackupDB_Batch {
         $input = $arg["input"] ?? null;
         $output = $arg["output"] ?? null;
         if ($input !== null
-            && in_array($this->subcommand, [self::S3_LIST, self::S3_GET, self::S3_RESTORE])) {
+            && in_array($this->subcommand, [self::S3_LIST, self::S3_GET, self::S3_RESTORE], true)) {
             $this->throw_error("Mode incompatible with `-i`");
         }
         if ($output !== null
-            && in_array($this->subcommand, [self::RESTORE, self::S3_LIST, self::S3_PUT, self::S3_RESTORE])) {
+            && in_array($this->subcommand, [self::RESTORE, self::S3_LIST, self::S3_PUT, self::S3_RESTORE], true)) {
             $this->throw_error("Mode incompatible with `-o`");
         }
 
@@ -353,15 +371,24 @@ class BackupDB_Batch {
 
         $ans = [];
         foreach ($s3->ls_all_keys($pfx) as $key) {
-            if ($key
-                && $bp->match($key)
-                && ($this->_before === null || ($bp->timestamp !== null && $bp->timestamp <= $this->_before))
-                && ($this->_after === null || ($bp->timestamp !== null && $bp->timestamp >= $this->_after))) {
-                if ($bp->timestamp !== null) {
-                    $ans[$bp->timestamp] = $key;
-                } else {
-                    $ans[] = $key;
+            if (!$key
+                || !$bp->match($key)
+                || ($this->_before !== null && ($bp->timestamp === null || $bp->timestamp > $this->_before))
+                || ($this->_after !== null && ($bp->timestamp === null || $bp->timestamp < $this->_after))) {
+                continue;
+            }
+            if ($this->_s3_tags) {
+                $tags = $s3->get_tagging($key);
+                foreach ($this->_s3_tags as $k => $v) {
+                    if (($tags[$k] ?? null) !== $v) {
+                        continue 2;
+                    }
                 }
+            }
+            if ($bp->timestamp !== null) {
+                $ans[$bp->timestamp] = $key;
+            } else {
+                $ans[] = $key;
             }
         }
 
@@ -479,7 +506,7 @@ class BackupDB_Batch {
 
     private function update_maybe_ephemeral() {
         $this->_maybe_ephemeral = 0;
-        if ($this->_inserting === $this->_created) {
+        if ($this->_inserting === $this->_created && $this->skip_ephemeral) {
             if ($this->_inserting === "settings"
                 && $this->_fields[0] === "name") {
                 $this->_maybe_ephemeral = 1;
@@ -603,6 +630,7 @@ class BackupDB_Batch {
         $p = 0;
         $l = strlen($s);
         if ($this->_inserting === null
+            && !$this->raw
             && str_starts_with($s, "INSERT")
             && preg_match('/\G(INSERT INTO `?([^`\s]*)`? VALUES)\s*(?=[(,]|$)/', $s, $m, 0, $p)) {
             $this->_inserting = strtolower($m[2]);
@@ -618,7 +646,7 @@ class BackupDB_Batch {
                 if ($p === $l) {
                     break;
                 } else if ($ch === "(") {
-                    if (!preg_match('/\G\((?:[^\\\\\')]|\'(?:[^\\\\\']|\\\\.)*+\')*+\)/s', $s, $m, 0, $p)) {
+                    if (!preg_match('/\G\((?:[^\')]*+(?:\'(?:[^\\\\\']*+(?:\\\\.)?+)*+\')?+)*+\)/s', $s, $m, 0, $p)) {
                         break;
                     }
                     if ($this->_maybe_ephemeral === 0
@@ -644,15 +672,17 @@ class BackupDB_Batch {
                     ++$p;
                 }
                 $this->_inserting = null;
+                $this->_separator = "";
                 break;
             }
         }
-        if (str_ends_with($s, "\n")) {
+        if ($p !== $l && str_ends_with($s, "\n")) {
+            $this->fwrite($this->_separator);
             $this->fwrite($p === 0 ? $s : substr($s, $p));
+            $this->_separator = "";
             return "";
-        } else {
-            return substr($s, $p);
         }
+        return substr($s, $p);
     }
 
     private function transfer() {
@@ -712,7 +742,13 @@ class BackupDB_Batch {
         if ($this->compress) {
             rewind($this->out);
         }
-        $ok = $this->s3_client()->put_file($bpk, $this->out, $this->compress ? "application/gzip" : "application/sql");
+        $user_data = [];
+        if (!empty($this->_s3_tags)) {
+            $user_data["x-amz-tagging"] = http_build_query($this->_s3_tags);
+        }
+        $ok = $this->s3_client()->put_file($bpk, $this->out,
+            $this->compress ? "application/gzip" : "application/sql",
+            $user_data);
         if (!$ok) {
             $this->throw_error("S3 error saving backup");
         } else if ($this->verbose) {
@@ -892,6 +928,7 @@ class BackupDB_Batch {
             "input:,in:,i: =DUMP Read input from file",
             "output:,out:,o: =DUMP Send output to file",
             "z,compress Compress output",
+            "raw Do not post-process SQL",
             "schema Output schema only",
             "no-ephemeral Omit ephemeral settings and values",
             "skip-comments Omit comments",
@@ -908,16 +945,18 @@ class BackupDB_Batch {
             "s3-list !s3 List backups on S3",
             "s3-dbname: =DBNAME !s3 Set dbname component of S3 path",
             "s3-confid:,s3-name: =CONFID !s3 Set confid component of S3 path",
+            "s3-tag[] =TAGPAIR !s3 Add S3 tag",
             "before: =DATE !s3 Include S3 backups before DATE",
             "after: =DATE !s3 Include S3 backups after DATE",
             "count: {n} =N !s3 Fetch N backups (--s3-get only)",
             "V,verbose Be verbose",
             "help::,h:: Print help"
         )->description("Back up HotCRP database or restore from backup.
-Usage: php batch/backupdb.php [-c FILE | -n CONFID] [OPTS...] [-z] -o DUMP
-       php batch/backupdb.php [-c FILE | -n CONFID] -r [OPTS...] DUMP")
+Usage: php batch/backupdb.php [-c FILE | -n CONFID] [OPTS...] [-z] > DUMP
+       php batch/backupdb.php [-c FILE | -n CONFID] [OPTS...] -r DUMP")
          ->helpopt("help")
          ->otheropt(true)
+         ->interleave(true)
          ->maxarg(1)
          ->parse($argv);
 

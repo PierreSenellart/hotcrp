@@ -44,9 +44,8 @@ class Decision_AssignmentParser extends UserlessAssignmentParser {
     function allow_paper(PaperInfo $prow, AssignmentState $state) {
         if ($state->user->can_set_decision($prow)) {
             return true;
-        } else {
-            return new AssignmentError("<0>You can’t change the decision for #{$prow->paperId}.");
         }
+        return new AssignmentError("<0>You can’t change the decision for #{$prow->paperId}");
     }
     function apply(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
         $removepred = null;
@@ -59,11 +58,11 @@ class Decision_AssignmentParser extends UserlessAssignmentParser {
                 } else if (empty($dlist)) {
                     return new AssignmentError("<0>No decisions match ‘" . $req["decision"] . "’");
                 } else {
-                    return new AssignmentError("<0>More than one decision matches ‘" . $req["decision"]);
+                    return new AssignmentError("<0>More than one decision matches ‘" . $req["decision"] . "’");
                 }
             } else {
                 $removepred = function ($item) use ($dlist) {
-                    return in_array($item->_decision, $dlist);
+                    return in_array($item->_decision, $dlist, true);
                 };
             }
         } else if (!$this->remove) {
@@ -131,9 +130,9 @@ class Decision_Assigner extends Assigner {
     function execute(AssignmentSet $aset) {
         $dec = $this->item->deleted() ? 0 : $this->item["_decision"];
         $aset->stage_qe("update Paper set outcome=? where paperId=?", $dec, $this->pid);
-        $aset->user->log_activity("Set decision: " . $aset->conf->decision_name($dec), $this->pid);
+        $aset->user->log_activity("Decision set: " . $aset->conf->decision_name($dec), $this->pid);
         if ($dec > 0 || $this->item->pre("_decision") > 0) {
-            $aset->register_cleanup_function("paperacc", function ($vals) use ($aset) {
+            $aset->register_cleanup_function("paperacc", function ($aset, $vals) {
                 $aset->conf->update_paperacc_setting(min($vals));
             }, $dec > 0 && $this->item["_decyes"] ? 1 : 0);
         }

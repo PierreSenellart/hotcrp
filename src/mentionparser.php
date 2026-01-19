@@ -143,7 +143,7 @@ class MentionParser {
             $uset = $matchuids = [];
             foreach ($ulists as $listindex => $ulist) {
                 foreach ($ulist as $u) {
-                    if (in_array($u->contactId, $matchuids)) {
+                    if (in_array($u->contactId, $matchuids, true)) {
                         continue;
                     }
                     // check name
@@ -256,9 +256,8 @@ class MentionParser {
     static function word_at($s, $pos, $isascii, &$m) {
         if ($isascii) {
             return !!preg_match('/\G([A-Za-z](?:[A-Za-z0-9]|-(?=[A-Za-z]))*)\.?[ \t]*\r?\n?[ \t]*/', $s, $m, 0, $pos);
-        } else {
-            return !!preg_match('/\G(\pL(?:[\pL\pM\pN]|-(?=\pL))*)\.?[ \t]*\r?\n?[ \t]*/u', $s, $m, 0, $pos);
         }
+        return !!preg_match('/\G(\pL(?:[\pL\pM\pN]|-(?=\pL))*)\.?[ \t]*\r?\n?[ \t]*/u', $s, $m, 0, $pos);
     }
 
     /** @param string $s

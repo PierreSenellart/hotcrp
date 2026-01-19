@@ -80,50 +80,6 @@ class JsonParser {
     }
 
     /** @param ?string $input
-     * @return $this
-     * @deprecated */
-    function input($input) {
-        return $this->set_input($input);
-    }
-
-    /** @param ?bool $assoc
-     * @param int $maxdepth
-     * @param int $flags
-     * @return $this
-     * @deprecated */
-    function params($assoc = null, $maxdepth = 512, $flags = 0) {
-        return $this->set_params($assoc, $maxdepth, $flags);
-    }
-
-    /** @param ?bool $assoc
-     * @return $this
-     * @deprecated */
-    function assoc($assoc = null) {
-        return $this->set_assoc($assoc);
-    }
-
-    /** @param int $maxdepth
-     * @return $this
-     * @deprecated */
-    function maxdepth($maxdepth = 512) {
-        return $this->set_maxdepth($maxdepth);
-    }
-
-    /** @param int $flags
-     * @return $this
-     * @deprecated */
-    function flags($flags = 0) {
-        return $this->set_flags($flags);
-    }
-
-    /** @param ?string $filename
-     * @return $this
-     * @deprecated */
-    function filename($filename) {
-        return $this->set_filename($filename);
-    }
-
-    /** @param ?string $input
      * @return $this */
     function set_input($input) {
         $this->input = $input;
@@ -353,7 +309,7 @@ class JsonParser {
             if (($this->flags & (self::JSON5 | self::JSON_EXTENDED_WHITESPACE)) !== 0
                 && ($ch < 0x20 || $ch >= 0xC2)) {
                 $ch = UnicodeHelper::utf8_ord($s, $pos);
-                if (in_array($ch, self::$json5_additional_whitespace)) {
+                if (in_array($ch, self::$json5_additional_whitespace, true)) {
                     $pos += UnicodeHelper::utf8_chrlen($ch);
                     continue;
                 }
@@ -512,7 +468,11 @@ class JsonParser {
         } else if (($ch === 45 || ($ch >= 48 && $ch <= 57))    // `[-0-9]`
                    && preg_match('/\G-?(?:0|[1-9]\d*+)((?:\.\d++)?(?:[Ee][-+]?\d++)?)/', $s, $m, 0, $pos)) {
             $this->pos = $pos + strlen($m[0]);
-            return $m[1] === "" ? intval($m[0]) : floatval($m[0]);
+            $x = stonum($m[0]);
+            if ($m[1] === "" && ($ix = (int) $x) == $x) {
+                return $ix;
+            }
+            return $x;
         } else if ($ch === 93) {     // `]`
             if ($context === self::CTX_ARRAY_ELEMENT) {
                 return $this->set_error($pos, JSON_ERROR_TRAILING_COMMA);

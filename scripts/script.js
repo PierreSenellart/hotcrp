@@ -10,19 +10,6 @@ function $$(id) {
     return document.getElementById(id);
 }
 
-function serialize_object(x) {
-    if (typeof x === "string")
-        return x;
-    else if (x) {
-        var k, v, a = [];
-        for (k in x)
-            if ((v = x[k]) != null)
-                a.push(encodeURIComponent(k) + "=" + encodeURIComponent(v));
-        return a.join("&");
-    } else
-        return "";
-}
-
 if (!window.JSON || !window.JSON.parse) {
     window.JSON = {parse: $.parseJSON};
 }
@@ -1103,7 +1090,10 @@ Object.assign(hotcrp.text, {
 
 // events
 var event_key = (function () {
-const key_map = {"Spacebar": " ", "Esc": "Escape"},
+const key_map = {
+        "Spacebar": " ", "Esc": "Escape", "Left": "ArrowLeft",
+        "Right": "ArrowRight", "Up": "ArrowUp", "Down": "ArrowDown"
+    },
     charCode_map = {"9": "Tab", "13": "Enter", "27": "Escape"},
     keyCode_map = {
         "9": "Tab", "13": "Enter", "16": "ShiftLeft", "17": "ControlLeft",
@@ -1150,12 +1140,9 @@ function event_key(evt) {
             return keyCode_map[x];
         } else if ((x >= 48 && x <= 57) || (x >= 65 && x <= 90)) {
             return String.fromCharCode(x);
-        } else {
-            return "";
         }
-    } else {
-        return "";
     }
+    return "";
 }
 event_key.printable = function (evt) {
     return !nonprintable_map[event_key(evt)]
@@ -1446,58 +1433,26 @@ function hoturl_add(url, component) {
 }
 
 function hoturl_search(url, key, value) {
-    var hash = url.indexOf("#"), question = url.indexOf("?"), pos;
-    hash = hash < 0 ? url.length : hash;
-    if (question < 0 && url.indexOf("/") < 0)
-        question = 0;
-    if (arguments.length === 1)
-        return question >= 0 && question < hash ? url.substring(question, hash) : "";
-    pos = question >= 0 && question < hash ? question : url.length;
-    while (pos >= 0 && (pos = url.indexOf(key, pos)) > 0 && pos < hash) {
-        var pch = url.charCodeAt(pos - 1), nch = url.charCodeAt(pos + key.length);
-        if ((pch === 63 || pch === 59 || pch === 38)
-            && (nch !== nch || nch === 61 || nch === 35 || nch === 59 || nch === 38)) {
-            var vpos = pos + key.length + (nch === 61),
-                amp = url.indexOf("&", vpos),
-                semi = url.indexOf(";", vpos),
-                stop = Math.min(hash, amp < 0 ? hash : amp, semi < 0 ? hash : semi);
-            if (arguments.length === 2)
-                return urldecode(url.substring(vpos, stop));
-            else if (value == null)
-                return url.substring(0, pos - (stop === hash)) + url.substring(stop + (stop < hash));
-            else
-                return url.substring(0, vpos).concat(nch === 61 ? "" : "=", urlencode(value), url.substring(stop));
-        }
-        pos += key.length;
+    let hash = url.indexOf("#"), question = url.indexOf("?");
+    hash = hash >= 0 ? hash : url.length;
+    question = question >= 0 ? question : url.length;
+    const s = question < hash ? url.substring(question, hash) : "";
+    if (arguments.length === 1) {
+        return s;
     }
-    if (arguments.length === 2)
-        return null;
-    else if (value == null)
-        return url;
-    else
-        return url.substring(0, hash).concat(question < 0 || question > hash ? "?" : "&", key, "=", urlencode(value), url.substring(hash));
-}
-
-function hoturl_find(xv, page_component) {
-    var m;
-    for (var i = 0; i < xv.length; ++i)
-        if ((m = page_component.exec(xv[i]))) {
-            m[0] = i;
-            return m;
-        }
-    return null;
-}
-
-function hoturl_clean(x, page_component, allow_fail) {
-    if (x.last !== false && x.v.length) {
-        var im = hoturl_find(x.v, page_component);
-        if (im) {
-            x.last = im[1];
-            x.t += "/" + im[1];
-            x.v.splice(im[0], 1);
-        } else if (!allow_fail)
-            x.last = false;
+    const param = new URLSearchParams(s);
+    if (arguments.length === 2) {
+        return param.get(key);
     }
+    if (value == null) {
+        param.delete(key);
+    } else {
+        param.set(key, value);
+    }
+    const pfx = url.substring(0, Math.min(question, hash)),
+        ns = param.toString(),
+        sfx = url.substring(hash);
+    return ns === "" ? pfx + sfx : `${pfx}?${ns}${sfx}`;
 }
 
 function hoturl_clean_param(x, k, value_match, allow_fail) {
@@ -1514,7 +1469,6 @@ function hoturl_clean_param(x, k, value_match, allow_fail) {
 }
 
 function hoturl(page, options) {
-    const page1 = page, options1 = options;
     let want_forceShow = false;
     if (siteinfo.site_relative == null || siteinfo.suffix == null) {
         siteinfo.site_relative = siteinfo.suffix = "";
@@ -1616,10 +1570,6 @@ function hoturl(page, options) {
         tail = "?" + paramstr + tail;
     }
     return siteinfo.site_relative + x.t + tail;
-}
-
-function hoturl_html(page, options) {
-    return escape_html(hoturl(page, options));
 }
 
 function make_URL(url, loc) {
@@ -2007,9 +1957,10 @@ return {
 
 // ui
 var handle_ui = (function () {
-var callbacks = {}, handling = {}, stopped = 0, nest = 0;
+const callbacks = {};
+let handling = {}, stopped = 0, nest = 0;
 function collect_callbacks(cbs, c, evt_type) {
-    var j, k;
+    let j, k;
     for (j = 0; j !== c.length; j += 3) {
         if (!c[j] || c[j] === evt_type) {
             for (k = cbs.length - 2; k >= 0 && c[j+2] > cbs[k+1]; k -= 2) {
@@ -2019,24 +1970,24 @@ function collect_callbacks(cbs, c, evt_type) {
     }
 }
 function call_callbacks(cbs, element, evt) {
-    var nhandling, nstopped, oevt = evt.originalEvent || evt;
+    let nested_handling, nested_stopped, oevt = evt.originalEvent || evt;
     try {
         if (++nest !== 1) {
-            nhandling = handling;
-            nstopped = stopped;
+            nested_handling = handling;
+            nested_stopped = stopped;
         }
         if (evt !== handling) {
             handling = evt;
             stopped = 0;
         }
-        for (var i = 0; i !== cbs.length && stopped !== 2; i += 2) {
+        for (let i = 0; i !== cbs.length && stopped !== 2; i += 2) {
             if (cbs[i].call(element, oevt) === false)
                 break;
         }
     } finally {
         if (--nest !== 0) {
-            handling = nhandling;
-            stopped = nstopped;
+            handling = nested_handling;
+            stopped = nested_stopped;
         }
     }
 }
@@ -2044,23 +1995,23 @@ function handle_ui(evt) {
     if (evt === handling && stopped !== 0) {
         return;
     }
-    var e = evt.target;
+    const e = evt.target;
     if ((e && hasClass(e, "uin"))
         || (evt.type === "click"
             && ((e && hasClass(e, "ui"))
                 || (this.nodeName === "A" && hasClass(this, "ui"))))) {
         evt.preventDefault();
     }
-    var k = classList(this), cbs = [];
-    for (var i = 0; i !== k.length; ++i) {
-        var c = callbacks[k[i]];
+    const k = classList(this), cbs = [];
+    for (let i = 0; i !== k.length; ++i) {
+        const c = callbacks[k[i]];
         c && collect_callbacks(cbs, c, evt.type);
     }
     cbs.length !== 0 && call_callbacks(cbs, this, evt);
 }
 handle_ui.on = function (s, callback, priority) {
-    var pos = 0, sp, dot = 0, len = s.length,
-        type, className;
+    let pos = 0, dot = 0;
+    const len = s.length;
     while (true) {
         while (pos !== len && s.charCodeAt(pos) === 32) {
             ++pos;
@@ -2068,12 +2019,13 @@ handle_ui.on = function (s, callback, priority) {
         if (pos === len) {
             return;
         }
-        sp = s.indexOf(" ", pos);
+        let sp = s.indexOf(" ", pos);
         sp = sp >= 0 ? sp : len;
         if (dot <= pos) {
             dot = s.indexOf(".", pos);
             dot = dot >= 0 ? dot : len;
         }
+        let type, className;
         if (dot < sp) {
             type = pos === dot ? null : s.substring(pos, dot);
             className = s.substring(dot + 1, sp);
@@ -2136,16 +2088,16 @@ function input_is_checkboxlike(elt) {
 }
 
 function input_is_buttonlike(elt) {
-    return elt.type === "button" || elt.type === "submit" || elt.type === "reset";
+    return elt.type === "button" || elt.type === "submit" || elt.type === "reset" || elt.type === "image";
 }
 
 function input_successful(elt) {
-    if (elt.disabled || !elt.name)
+    if (elt.disabled || !elt.name) {
         return false;
-    else if (elt.type === "checkbox" || elt.type === "radio")
+    } else if (elt.type === "checkbox" || elt.type === "radio") {
         return elt.checked;
-    else
-        return elt.type !== "button" && elt.type !== "submit" && elt.type !== "reset";
+    }
+    return elt.type !== "button" && elt.type !== "submit" && elt.type !== "reset" && elt.type !== "image";
 }
 
 function input_default_value(elt) {
@@ -2205,17 +2157,17 @@ function input_differs(elt) {
 }
 
 function form_differs(form) {
-    var coll, i, len, e;
-    if (form instanceof HTMLFormElement)
+    let coll;
+    if (form instanceof HTMLFormElement) {
         coll = form.elements;
-    else {
+    } else {
         coll = $(form).find("input, select, textarea");
         if (!coll.length)
             coll = $(form).filter("input, select, textarea");
     }
-    len = coll.length;
-    for (i = 0; i !== len; ++i) {
-        e = coll[i];
+    const len = coll.length;
+    for (let i = 0; i !== len; ++i) {
+        const e = coll[i];
         if (e.name
             && !hasClass(e, "ignore-diff")
             && !e.disabled
@@ -2355,34 +2307,41 @@ function focus_and_scroll_into_view(e, down) {
 }
 
 handle_ui.on("js-range-click", function (evt) {
-    var f = this.form,
+    let key = false;
+    if (evt.type === "keydown") {
+        if (event_key.modcode(evt)
+            || ((key = event_key(evt)) !== "ArrowDown" && key !== "ArrowUp")) {
+            return;
+        }
+    } else if (evt.type !== "updaterange" && evt.type !== "click") {
+        return;
+    }
+
+    const f = this.form,
         rangeclick_state = f.jsRangeClick || {},
         kind = this.getAttribute("data-range-type") || this.name;
+    if (rangeclick_state.__clicking__
+        || (evt.type === "updaterange" && rangeclick_state["__update_" + kind] === evt.detail)) {
+        return;
+    }
     f.jsRangeClick = rangeclick_state;
 
-    var key = false;
-    if (evt.type === "keydown" && !event_key.modcode(evt)) {
-        key = event_key(evt);
-    }
-    if (rangeclick_state.__clicking__
-        || (evt.type === "keydown" && key !== "ArrowDown" && key !== "ArrowUp")
-        || (evt.type === "updaterange" && rangeclick_state["__update_" + kind] === evt.detail))
-        return;
-
     // find checkboxes and groups of this type
-    var cbs = [], cbisg = [], cbgs = [], x;
+    const cbs = [], cbisg = [], cbgs = [];
     $(f).find("input.js-range-click").each(function () {
         var tkind = this.getAttribute("data-range-type") || this.name;
         if (kind === tkind) {
             cbs.push(this);
-            cbisg.push((x = hasClass(this, "is-range-group")));
+            const x = hasClass(this, "is-range-group");
+            cbisg.push(x);
             x && cbgs.push(this);
         }
     });
 
     // find positions
-    var lastelt = rangeclick_state[kind], thispos, lastpos, i;
-    for (i = 0; i !== cbs.length; ++i) {
+    const lastelt = rangeclick_state[kind];
+    let thispos, lastpos;
+    for (let i = 0; i !== cbs.length; ++i) {
         if (cbs[i] === this)
             thispos = i;
         if (cbs[i] === lastelt)
@@ -2399,28 +2358,27 @@ handle_ui.on("js-range-click", function (evt) {
         return;
     }
 
-    var lastgidx = 0;
+    let lastgidx = 0;
     function range_group_match(e, g, gelt) {
-        var i, eg;
         if (g === "auto") {
             if (cbs[lastgidx] !== gelt) {
                 for (lastgidx = 0; cbs[lastgidx] && cbs[lastgidx] !== gelt; ++lastgidx) {
                 }
             }
-            for (i = lastgidx + 1; cbs[i] && !cbisg[i]; ++i) {
+            for (let i = lastgidx + 1; cbs[i] && !cbisg[i]; ++i) {
                 if (cbs[i] === e)
                     return true;
             }
             return false;
-        } else {
-            return !g
-                || (eg = e.getAttribute("data-range-group")) === g
-                || (eg && eg.length > g.length && eg.split(" ").includes(g));
         }
+        let eg;
+        return !g
+            || (eg = e.getAttribute("data-range-group")) === g
+            || (eg && eg.length > g.length && eg.split(" ").includes(g));
     }
 
     // handle click
-    var group = null, gelt = null, single_clicked = false, j;
+    let group = null, gelt = null, single_clicked = false, i, j;
     if (evt.type === "click") {
         rangeclick_state.__clicking__ = true;
 
@@ -2449,6 +2407,7 @@ handle_ui.on("js-range-click", function (evt) {
         for (; i <= j; ++i) {
             if (!cbisg[i]
                 && cbs[i].checked !== this.checked
+                && !cbs[i].disabled
                 && range_group_match(cbs[i], group, gelt))
                 $(cbs[i]).trigger("click");
         }
@@ -2465,12 +2424,12 @@ handle_ui.on("js-range-click", function (evt) {
         if (single_clicked && !range_group_match(single_clicked, group, cbgs[j]))
             continue;
 
-        var state = null;
+        let state = null;
         for (i = 0; i !== cbs.length; ++i) {
             if (!cbisg[i] && range_group_match(cbs[i], group, cbgs[j])) {
-                if (state === null)
+                if (state === null) {
                     state = cbs[i].checked;
-                else if (state !== cbs[i].checked) {
+                } else if (state !== cbs[i].checked) {
                     state = 2;
                     break;
                 }
@@ -2483,6 +2442,19 @@ handle_ui.on("js-range-click", function (evt) {
         } else {
             cbgs[j].indeterminate = false;
             cbgs[j].checked = state;
+        }
+    }
+});
+
+handle_ui.on("js-range-radio", function (evt) {
+    const f = this.form,
+        kind = this.getAttribute("data-range-type") || this.name;
+
+    // find checkboxes of this type
+    for (const e of f.querySelectorAll("input.js-range-radio:checked")) {
+        const tkind = e.getAttribute("data-range-type") || this.name;
+        if (kind === tkind && e !== this) {
+            e.checked = false;
         }
     }
 });
@@ -2528,231 +2500,265 @@ handle_ui.on("js-range-combo", function () {
 
 // bubbles and tooltips
 var make_bubble = (function () {
-var capdir = ["Top", "Right", "Bottom", "Left"],
+
+const ucdir = ["Top", "Right", "Bottom", "Left"],
     lcdir = ["top", "right", "bottom", "left"],
     szdir = ["height", "width"],
-    SPACE = 8;
-
-function cssborder(dir, suffix) {
-    return "border" + capdir[dir] + suffix;
-}
-
-function cssbc(dir) {
-    return cssborder(dir, "Color");
-}
-
-var roundpixel = Math.round;
-if (window.devicePixelRatio && window.devicePixelRatio > 1)
-    roundpixel = (function (dpr) {
-        return function (x) { return Math.round(x * dpr) / dpr; };
-    })(window.devicePixelRatio);
+    SPACE = 8,
+    sizemap = {},
+    dpr = window.devicePixelRatio || 1,
+    roundpixel = dpr > 1 ? x => Math.round(x * dpr) / dpr : Math.round;
 
 function to_rgba(c) {
-    var m = c.match(/^rgb\((.*)\)$/);
+    const m = c.match(/^rgb\((.*)\)$/);
     return m ? "rgba(" + m[1] + ", 1)" : c;
 }
 
-function make_model(color) {
-    return $('<div class="bubble hidden'.concat(color, '"><div class="bubtail bubtail0', color, '"></div></div>')).appendTo(document.body);
+function cssfloat(s) {
+    const v = parseFloat(s);
+    return v === v ? v : 0;
 }
 
 function calculate_sizes(color) {
-    var $model = make_model(color), tail = $model.children(), ds, x;
-    var sizes = [tail.width(), tail.height()];
-    for (ds = 0; ds < 4; ++ds) {
-        sizes[lcdir[ds]] = 0;
-        if ((x = $model.css("margin" + capdir[ds])) && (x = parseFloat(x)))
-            sizes[lcdir[ds]] = x;
+    if (!sizemap[color]) {
+        const et = $e("div", "bubtail"),
+            eb = $e("div", "bubble" + color, et);
+        eb.hidden = true;
+        document.body.appendChild(eb);
+        const ets = window.getComputedStyle(et),
+            ebs = window.getComputedStyle(eb),
+            sizes = {"0": parseFloat(ets.width), "1": parseFloat(ets.height)};
+        for (let ds = 0; ds < 4; ++ds) {
+            sizes[lcdir[ds]] = cssfloat(ebs[`margin${ucdir[ds]}`] || "0");
+        }
+        eb.remove();
+        sizemap[color] = sizes;
     }
-    $model.remove();
-    return sizes;
+    return sizemap[color];
 }
 
-return function (content, bubopt) {
-    if (!bubopt && content && typeof content === "object") {
-        bubopt = content;
-        content = bubopt.content;
-    } else if (!bubopt)
-        bubopt = {};
-    else if (typeof bubopt === "string")
-        bubopt = {color: bubopt};
-    const container = bubopt.container || document.body;
-
-    var nearpos = null, dirspec = bubopt.anchor, dir = null,
-        color = bubopt.color ? " " + bubopt.color : "";
-
-    var bubdiv = $e("div", "bubble" + color,
-        $e("div", "bubtail bubtail0"),
-        $e("div", "bubcontent"),
-        $e("div", "bubtail bubtail1"));
-    bubdiv.setAttribute("style", "margin:0");
-    bubdiv.firstChild.setAttribute("style", "width:0;height:0");
-    bubdiv.lastChild.setAttribute("style", "width:0;height:0");
-    container.appendChild(bubdiv);
-    if (bubopt["pointer-events"]) {
-        $(bubdiv).css({"pointer-events": bubopt["pointer-events"]});
+function parse_dirspec(dirspec, pos) {
+    let res;
+    if (dirspec.length > pos
+        && (res = "0123trblnesw".indexOf(dirspec.charAt(pos))) >= 0) {
+        return res % 4;
     }
-    if (container !== document.body) {
-        bubdiv.style.position = "absolute";
+    return -1;
+}
+
+function csscornerradius(styles, corner, index) {
+    let divbr = styles[`border${corner}Radius`], pos;
+    if (!divbr) {
+        return 0;
     }
-    var bubch = bubdiv.childNodes;
-    var sizes = null;
-    var divbw = null;
+    if ((pos = divbr.indexOf(" ")) > -1) {
+        divbr = index ? divbr.substring(pos + 1) : divbr.substring(0, pos);
+    }
+    return cssfloat(divbr);
+}
 
-    function change_tail_direction() {
-        const bw = [0, 0, 0, 0], trw = sizes[1], trh = sizes[0] / 2,
-            divsty = window.getComputedStyle(bubdiv);
-        divbw = parseFloat(divsty[cssborder(dir, "Width")]);
-        divbw !== divbw && (divbw = 0); // eliminate NaN
-        bw[dir^1] = bw[dir^3] = trh + "px";
-        bw[dir^2] = trw + "px";
-        bubch[0].style.borderWidth = bw.join(" ");
-        bw[dir^1] = bw[dir^3] = trh + "px";
-        bw[dir^2] = trw + "px";
-        bubch[2].style.borderWidth = bw.join(" ");
+function constrainradius(styles, v, bpos, ds, sizes) {
+    let v0, v1;
+    if (ds & 1) {
+        v0 = csscornerradius(styles, ucdir[0] + ucdir[ds], 1);
+        v1 = csscornerradius(styles, ucdir[2] + ucdir[ds], 1);
+    } else {
+        v0 = csscornerradius(styles, ucdir[ds] + ucdir[3], 1);
+        v1 = csscornerradius(styles, ucdir[ds] + ucdir[1], 1);
+    }
+    return Math.min(Math.max(v, v0), bpos[szdir[(ds&1)^1]] - v1 - sizes[0]);
+}
 
-        for (var i = 1; i <= 3; ++i) {
-            bubch[0].style[lcdir[dir^i]] = bubch[2].style[lcdir[dir^i]] = "";
+function change_tail_direction(tail, bubsty, sizes, dir) {
+    const wx = sizes[dir&1], wy = sizes[(dir&1)^1],
+        bw = cssfloat(bubsty[`border${ucdir[dir]}Width`]),
+        wx1 = wx + (dir&1 ? bw : 0), wy1 = wy + (dir&1 ? 0 : bw);
+    let d;
+    if (dir === 0) {
+        d = `M0 ${wy1}L${wx/2} ${wy1-wy} ${wx} ${wy1}`;
+    } else if (dir === 1) {
+        d = `M0 0L${wx} ${wy/2} 0 ${wy}`;
+    } else if (dir === 2) {
+        d = `M0 0L${wx/2} ${wy} ${wx} 0`;
+    } else {
+        d = `M${wx1} 0L${wx1-wx} ${wy/2} ${wx1} ${wy}`;
+    }
+    const stroke = bubsty[`border${ucdir[dir]}Color`],
+        fill = to_rgba(bubsty.backgroundColor)
+            .replace(/([\d.]+)(?=\))/, (s, p1) => 0.75 * p1 + 0.25);
+    tail.replaceChildren($svg("svg",
+        {width: `${wx1}px`, height: `${wy1}px`, class: "d-block"},
+        $svg("path", {
+            d: d, stroke: stroke, fill: fill, "stroke-width": bw
+        })));
+    tail.style.width = `${wx1}px`;
+    tail.style.height = `${wy1}px`;
+    tail.style.top = tail.style.left = tail.style.top = tail.style.bottom = "";
+    if (dir & 1) {
+        tail.style[lcdir[dir]] = `${-wx1}px`;
+    } else {
+        tail.style[lcdir[dir]] = `${-wy1}px`;
+    }
+}
+
+function make_bubble(bubopts, buboptsx) {
+    if (typeof bubopts === "string") {
+        bubopts = {content: bubopts};
+    }
+    if (buboptsx) {
+        bubopts = Object.assign({}, bubopts,
+            typeof buboptsx === "string" ? {class: buboptsx} : buboptsx);
+    }
+
+    let color = bubopts.class || bubopts.color || "", dirspec = bubopts.anchor;
+    if (color !== "") {
+        color = " " + color;
+    }
+
+    let bubdiv = bubopts.element, bubdiv_temporary = !bubdiv;
+    if (bubdiv) {
+        if (!hasClass(bubdiv, "bubble")) {
+            throw new Error("bad bubble element");
         }
-        bubch[0].style[lcdir[dir]] = (-trw - divbw) + "px";
-        // Offset the inner triangle so that the border width in the diagonal
-        // part of the tail, is visually similar to the border width
-        var trdelta = (divbw / trh) * Math.sqrt(trw * trw + trh * trh);
-        bubch[2].style[lcdir[dir]] = (-trw - divbw + trdelta) + "px";
-
-        for (i = 0; i < 3; i += 2) {
-            bubch[i].style.borderLeftColor = bubch[i].style.borderRightColor =
-            bubch[i].style.borderTopColor = bubch[i].style.borderBottomColor = "transparent";
+        if (!bubdiv.lastChild
+            || bubdiv.lastChild.nodeName !== "DIV"
+            || bubdiv.lastChild.className !== "bubtail") {
+            bubdiv.appendChild($e("div", {class: "bubtail", role: "none"}));
         }
-
-        var yc = to_rgba(divsty.backgroundColor).replace(/([\d.]+)\)/, function (s, p1) {
-            return (0.75 * p1 + 0.25) + ")";
-        });
-        bubch[0].style[cssbc(dir^2)] = divsty[cssbc(dir)];
-        bubch[2].style[cssbc(dir^2)] = yc;
+        if (bubdiv.childNodes.length !== 2
+            || bubdiv.firstChild.nodeName !== "DIV"
+            || !hasClass(bubdiv.firstChild, "bubcontent")) {
+            const content = $e("div", "bubcontent"),
+                tail = bubdiv.lastChild;
+            bubdiv.insertBefore(content, bubdiv.firstChild);
+            while (content.nextSibling !== tail) {
+                content.appendChild(content.nextSibling);
+            }
+        }
+        bubdiv.className = "bubble" + color;
+        bubdiv.style.marginLeft = bubdiv.style.marginRight = bubdiv.style.marginTop = bubdiv.style.marginBottom = "0";
+        if (bubopts["pointer-events"]) {
+            bubdiv.style.pointerEvents = bubopts["pointer-events"];
+        }
+        bubdiv.style.visibility = "hidden";
     }
 
-    function constrainmid(nearpos, wpos, ds, ds2) {
-        var z0 = nearpos[lcdir[ds]], z1 = nearpos[lcdir[ds^2]],
-            z = (1 - ds2) * z0 + ds2 * z1;
+    let nearpos = null, dir = null, sizes = null;
+
+    function ensure() {
+        if (!bubdiv) {
+            bubdiv = make_bubble.skeleton();
+            bubdiv.className = "bubble" + color;
+            if (bubopts["pointer-events"]) {
+                bubdiv.style.pointerEvents = bubopts["pointer-events"];
+            }
+            const container = bubopts.container || document.body;
+            container.appendChild(bubdiv);
+        }
+    }
+    ensure();
+
+    function constrainmid(nearpos, wpos, ds, tailfrac) {
+        const z0 = nearpos[lcdir[ds]], z1 = nearpos[lcdir[ds^2]];
+        let z = (1 - tailfrac) * z0 + tailfrac * z1;
         z = Math.max(z, Math.min(z1, wpos[lcdir[ds]] + SPACE));
         return Math.min(z, Math.max(z0, wpos[lcdir[ds^2]] - SPACE));
     }
 
-    function constrain(za, wpos, bpos, ds, ds2, noconstrain) {
-        var z0 = wpos[lcdir[ds]], z1 = wpos[lcdir[ds^2]],
-            bdim = bpos[szdir[ds&1]],
-            z = za - ds2 * bdim;
-        if (!noconstrain && z < z0 + SPACE)
+    function constrain(za, wpos, bpos, ds, tailfrac, noconstrain) {
+        const z0 = wpos[lcdir[ds]], z1 = wpos[lcdir[ds^2]], bdim = bpos[szdir[ds&1]];
+        let z = za - tailfrac * bdim;
+        if (!noconstrain && z < z0 + SPACE) {
             z = Math.min(za - sizes[0], z0 + SPACE);
-        else if (!noconstrain && z + bdim > z1 - SPACE)
+        } else if (!noconstrain && z + bdim > z1 - SPACE) {
             z = Math.max(za + sizes[0] - bdim, z1 - SPACE - bdim);
+        }
         return z;
     }
 
     function bpos_wconstraint(wpos, ds) {
-        var xw = Math.max(ds === 3 ? 0 : nearpos.left - wpos.left,
-                          ds === 1 ? 0 : wpos.right - nearpos.right);
-        if ((ds === "h" || ds === 1 || ds === 3) && xw > 100)
+        const xw = Math.max(ds === 3 ? 0 : nearpos.left - wpos.left,
+                            ds === 1 ? 0 : wpos.right - nearpos.right);
+        if ((ds === "h" || ds === 1 || ds === 3) && xw > 100) {
             return Math.min(wpos.width, xw) - 3*SPACE;
-        else
-            return wpos.width - 3*SPACE;
+        }
+        return wpos.width - 3*SPACE;
     }
 
     function make_bpos(wpos, ds) {
-        var $b = $(bubdiv);
-        $b.css("maxWidth", "");
-        var bg = $b.geometry(true);
-        var wconstraint = bpos_wconstraint(wpos, ds);
+        bubdiv.style.maxWidth = "";
+        let bg = $(bubdiv).geometry(true);
+        const wconstraint = bpos_wconstraint(wpos, ds);
         if (wconstraint < bg.width) {
-            $b.css("maxWidth", wconstraint);
-            bg = $b.geometry(true);
+            bubdiv.style.maxWidth = wconstraint + "px";
+            bg = $(bubdiv).geometry(true);
         }
         // bpos[D] is the furthest position in direction D, assuming
         // the bubble was placed on that side. E.g., bpos[0] is the
         // top of the bubble, assuming the bubble is placed over the
         // reference.
-        var bpos = [nearpos.top - sizes.bottom - bg.height - sizes[0],
-                    nearpos.right + sizes.left + bg.width + sizes[0],
-                    nearpos.bottom + sizes.top + bg.height + sizes[0],
-                    nearpos.left - sizes.right - bg.width - sizes[0]];
-        bpos.width = bg.width;
-        bpos.height = bg.height;
-        bpos.wconstraint = wconstraint;
-        return bpos;
+        return {
+            "0": nearpos.top - sizes.bottom - bg.height - sizes[0],
+            "1": nearpos.right + sizes.left + bg.width + sizes[0],
+            "2": nearpos.bottom + sizes.top + bg.height + sizes[0],
+            "3": nearpos.left - sizes.right - bg.width - sizes[0],
+            width: bg.width,
+            height: bg.height,
+            wconstraint: wconstraint
+        };
     }
 
     function remake_bpos(bpos, wpos, ds) {
-        var wconstraint = bpos_wconstraint(wpos, ds);
+        const wconstraint = bpos_wconstraint(wpos, ds);
         if ((wconstraint < bpos.wconstraint && wconstraint < bpos.width)
-            || (wconstraint > bpos.wconstraint && bpos.width >= bpos.wconstraint))
+            || (wconstraint > bpos.wconstraint && bpos.width >= bpos.wconstraint)) {
             bpos = make_bpos(wpos, ds);
+        }
         return bpos;
     }
 
-    function parse_dirspec(dirspec, pos) {
-        var res;
-        if (dirspec.length > pos
-            && (res = "0123trblnesw".indexOf(dirspec.charAt(pos))) >= 0)
-            return res % 4;
-        return -1;
-    }
-
-    function csscornerradius(corner, index) {
-        var divbr = $(bubdiv).css("border" + corner + "Radius"), pos;
-        if (!divbr)
-            return 0;
-        if ((pos = divbr.indexOf(" ")) > -1)
-            divbr = index ? divbr.substring(pos + 1) : divbr.substring(0, pos);
-        return parseFloat(divbr);
-    }
-
-    function constrainradius(x, bpos, ds) {
-        var x0, x1;
-        if (ds & 1) {
-            x0 = csscornerradius(capdir[0] + capdir[ds], 1);
-            x1 = csscornerradius(capdir[2] + capdir[ds], 1);
-        } else {
-            x0 = csscornerradius(capdir[ds] + capdir[3], 1);
-            x1 = csscornerradius(capdir[ds] + capdir[1], 1);
-        }
-        return Math.min(Math.max(x, x0), bpos[szdir[(ds&1)^1]] - x1 - sizes[0]);
-    }
-
     function show() {
-        if (!sizes)
+        ensure();
+        bubdiv.hidden = false;
+        if (!sizes) {
             sizes = calculate_sizes(color);
+        }
 
         // parse dirspec
-        if (dirspec == null)
+        if (dirspec == null) {
             dirspec = "r";
-        var noflip = /!/.test(dirspec),
+        }
+        dirspec = dirspec.toString();
+        let noflip = /!/.test(dirspec),
             noconstrain = /\*/.test(dirspec),
             dsx = dirspec.replace(/[^a0-3neswtrblhv]/, ""),
             ds = parse_dirspec(dsx, 0),
-            ds2 = parse_dirspec(dsx, 1);
-        if (ds >= 0 && ds2 >= 0 && (ds2 & 1) != (ds & 1))
-            ds2 = (ds2 === 1 || ds2 === 2 ? 1 : 0);
-        else
-            ds2 = 0.5;
-        if (ds < 0)
+            tailfrac = parse_dirspec(dsx, 1);
+        if (ds >= 0 && tailfrac >= 0 && (tailfrac & 1) != (ds & 1)) {
+            tailfrac = (tailfrac === 1 || tailfrac === 2 ? 1 : 0);
+        } else {
+            tailfrac = 0.5;
+        }
+        if (ds < 0) {
             ds = /^[ahv]$/.test(dsx) ? dsx : "a";
+        }
 
-        var wpos = $(window).geometry();
-        $(bubdiv).css({maxWidth: "", left: "", top: ""});
-        var bpos = make_bpos(wpos, dsx);
+        const wpos = $(window).geometry();
+        bubdiv.style.maxWidth = bubdiv.style.left = bubdiv.style.top = "";
+        let bpos = make_bpos(wpos, dsx);
 
         if (ds === "a") {
             if (bpos.height + sizes[0] > Math.max(nearpos.top - wpos.top, wpos.bottom - nearpos.bottom)) {
                 ds = "h";
                 bpos = remake_bpos(bpos, wpos, ds);
-            } else
+            } else {
                 ds = "v";
+            }
         }
 
-        var wedge = [wpos.top + 3*SPACE, wpos.right - 3*SPACE,
-                     wpos.bottom - 3*SPACE, wpos.left + 3*SPACE];
-        if ((ds === "v" || ds === 0 || ds === 2) && !noflip && ds2 < 0
+        const wedge = [wpos.top + 3*SPACE, wpos.right - 3*SPACE,
+                       wpos.bottom - 3*SPACE, wpos.left + 3*SPACE];
+        if ((ds === "v" || ds === 0 || ds === 2) && !noflip && tailfrac < 0
             && bpos[2] > wedge[2] && bpos[0] < wedge[0]
             && (bpos[3] >= wedge[3] || bpos[1] <= wedge[1])) {
             ds = "h";
@@ -2761,67 +2767,93 @@ return function (content, bubopt) {
         if ((ds === "v" && bpos[2] > wedge[2] && bpos[0] > wedge[0])
             || (ds === 0 && !noflip && bpos[2] > wpos.bottom
                 && wpos.top - bpos[0] < bpos[2] - wpos.bottom)
-            || (ds === 2 && (noflip || bpos[0] >= wpos.top + SPACE)))
+            || (ds === 2 && (noflip || bpos[0] >= wpos.top + SPACE))) {
             ds = 2;
-        else if (ds === "v" || ds === 0 || ds === 2)
+        } else if (ds === "v" || ds === 0 || ds === 2) {
             ds = 0;
-        else if ((ds === "h" && bpos[3] - wpos.left < wpos.right - bpos[1])
-                 || (ds === 1 && !noflip && bpos[3] < wpos.left)
-                 || (ds === 3 && (noflip || bpos[1] <= wpos.right - SPACE)))
+        } else if ((ds === "h" && bpos[3] - wpos.left < wpos.right - bpos[1])
+                   || (ds === 1 && !noflip && bpos[3] < wpos.left)
+                   || (ds === 3 && (noflip || bpos[1] <= wpos.right - SPACE))) {
             ds = 3;
-        else
+        } else {
             ds = 1;
+        }
         bpos = remake_bpos(bpos, wpos, ds);
 
+        const bubsty = window.getComputedStyle(bubdiv);
         if (ds !== dir) {
             dir = ds;
-            change_tail_direction();
+            change_tail_direction(bubdiv.lastChild, bubsty, sizes, dir);
         }
 
-        var x, y, xa, ya, d, bubsty = window.getComputedStyle(bubdiv);
-        var divbw = parseFloat(bubsty[cssborder(ds & 1 ? 0 : 3, "Width")]);
+        let x, y, xa, ya;
         if (ds & 1) {
-            ya = constrainmid(nearpos, wpos, 0, ds2);
-            y = constrain(ya, wpos, bpos, 0, ds2, noconstrain);
-            d = constrainradius(roundpixel(ya - y - sizes[0] / 2 - divbw), bpos, ds);
-            bubch[0].style.top = bubch[2].style.top = d + "px";
-
-            if (ds == 1)
-                x = nearpos.left - sizes.right - bpos.width - sizes[1] - 1;
-            else
+            ya = constrainmid(nearpos, wpos, 0, tailfrac);
+            y = constrain(ya, wpos, bpos, 0, tailfrac, noconstrain);
+            if (ds === 1) {
+                x = nearpos.left - sizes.right - bpos.width - sizes[1];
+            } else {
                 x = nearpos.right + sizes.left + sizes[1];
+            }
         } else {
-            xa = constrainmid(nearpos, wpos, 3, ds2);
-            x = constrain(xa, wpos, bpos, 3, ds2, noconstrain);
-            d = constrainradius(roundpixel(xa - x - sizes[0] / 2 - divbw), bpos, ds);
-            bubch[0].style.left = bubch[2].style.left = d + "px";
-
-            if (ds == 0)
+            xa = constrainmid(nearpos, wpos, 3, tailfrac);
+            x = constrain(xa, wpos, bpos, 3, tailfrac, noconstrain);
+            if (ds === 0) {
                 y = nearpos.bottom + sizes.top + sizes[1];
-            else
-                y = nearpos.top - sizes.bottom - bpos.height - sizes[1] - 1;
+            } else {
+                y = nearpos.top - sizes.bottom - bpos.height - sizes[1];
+            }
         }
 
+        let dx = 0, dy = 0;
+        const container = bubdiv.parentElement;
         if (bubsty.position === "fixed" || container !== document.body) {
-            x -= window.scrollX;
-            y -= window.scrollY;
+            dx -= window.scrollX;
+            dy -= window.scrollY;
         }
-        if (container !== document.body) {
+        if (bubsty.position !== "fixed" && container !== document.body) {
             const cg = $(container).geometry();
-            x += container.scrollLeft - cg.x;
-            y += container.scrollTop - cg.y;
+            dx -= cg.x - container.scrollLeft;
+            dy -= cg.y - container.scrollTop;
         }
-        bubdiv.style.left = roundpixel(x) + "px";
-        bubdiv.style.top = roundpixel(y) + "px";
+        x = roundpixel(x + dx);
+        y = roundpixel(y + dy);
+
+        let d;
+        if (ds & 1) {
+            d = ya + dy - y - cssfloat(bubsty.borderTopWidth) - sizes[0]/2;
+        } else {
+            d = xa + dx - x - cssfloat(bubsty.borderLeftWidth) - sizes[0]/2;
+        }
+        bubdiv.lastChild.style[lcdir[ds&1?0:3]] = constrainradius(bubsty, d, bpos, ds, sizes) + "px";
+
+        bubdiv.style.left = x + "px";
+        bubdiv.style.top = y + "px";
         bubdiv.style.visibility = "visible";
+        bubdiv.hidden = false;
     }
 
     function remove() {
-        bubdiv && bubdiv.parentElement.removeChild(bubdiv);
-        bubdiv = null;
+        if (bubdiv && bubdiv_temporary) {
+            bubdiv.remove();
+            bubdiv = null;
+        } else if (bubdiv) {
+            bubdiv.hidden = true;
+        }
     }
 
-    var bubble = {
+    function reclass(newcolor) {
+        newcolor = newcolor ? " " + newcolor : "";
+        if (color !== newcolor) {
+            color = newcolor;
+            bubdiv.className = "bubble" + color;
+            dir = sizes = null;
+            nearpos && show();
+        }
+        return bubble;
+    }
+
+    const bubble = {
         near: function (epos, reference) {
             if (typeof epos === "string" || epos.tagName || epos.jquery) {
                 epos = $(epos);
@@ -2852,23 +2884,14 @@ return function (content, bubopt) {
             return bubble;
         },
         remove: remove,
-        color: function (newcolor) {
-            newcolor = newcolor ? " " + newcolor : "";
-            if (color !== newcolor) {
-                color = newcolor;
-                bubdiv.className = "bubble" + color;
-                bubch[0].className = "bubtail bubtail0" + color;
-                bubch[2].className = "bubtail bubtail1" + color;
-                dir = sizes = null;
-                nearpos && show();
-            }
-            return bubble;
-        },
+        className: reclass,
+        color: reclass,
         html: function (content) {
-            var n = bubch[1];
             if (content === undefined) {
-                return n.innerHTML;
+                return bubdiv ? bubdiv.firstChild.innerHTML : "";
             }
+            ensure();
+            const n = bubdiv.firstChild;
             if (typeof content === "string"
                 && content === n.innerHTML
                 && bubdiv.style.visibility === "visible") {
@@ -2887,69 +2910,100 @@ return function (content, bubopt) {
         },
         text: function (text) {
             if (text === undefined) {
-                return $(bubch[1]).text();
+                return bubdiv ? bubdiv.firstChild.textContent : "";
             }
             return bubble.replace_content(text);
         },
         content_node: function () {
-            return bubch[1];
+            return bubdiv.firstChild;
         },
         replace_content: function (...es) {
-            bubch[1].replaceChildren(...es);
+            ensure();
+            bubdiv.firstChild.replaceChildren(...es);
             nearpos && show();
             return bubble;
         },
         hover: function (enter, leave) {
-            $(bubdiv).hover(enter, leave);
+            bubdiv.addEventListener("pointerenter", enter);
+            bubdiv.addEventListener("pointerleave", leave);
             return bubble;
         },
         removeOn: function (jq, evt) {
-            if (arguments.length > 1)
+            if (arguments.length > 1) {
                 $(jq).on(evt, remove);
-            else if (bubdiv)
+            } else if (bubdiv) {
                 $(bubdiv).on(jq, remove);
+            }
             return bubble;
         },
+        element: function () {
+            return bubdiv;
+        },
         self: function () {
-            return bubdiv ? $(bubdiv) : null;
+            return $(bubdiv);
         },
         outerHTML: function () {
             return bubdiv ? bubdiv.outerHTML : null;
         }
     };
 
-    content && bubble.html(content);
+    if (bubopts.content) {
+        bubble.html(bubopts.content);
+    }
     return bubble;
+}
+
+make_bubble.skeleton = function () {
+    return $e("div", {class: "bubble", style: "margin:0", role: "tooltip", hidden: true},
+        $e("div", "bubcontent"),
+        $e("div", {class: "bubtail", role: "none"}));
 };
+
+return make_bubble;
 })();
 
 
 hotcrp.tooltip = (function ($) {
-var builders = {}, global_tooltip = null;
+const builders = {};
+let global_tooltip = null;
+const tooltip_map = new WeakMap;
 
 function prepare_info(elt, info) {
     var xinfo = elt.getAttribute("data-tooltip-info");
     if (xinfo) {
-        if (typeof xinfo === "string" && xinfo.charAt(0) === "{")
+        if (typeof xinfo === "string" && xinfo.charAt(0) === "{") {
             xinfo = JSON.parse(xinfo);
-        else if (typeof xinfo === "string")
+        } else if (typeof xinfo === "string") {
             xinfo = {builder: xinfo};
+        }
         info = $.extend(xinfo, info);
     }
-    if (info.builder && builders[info.builder])
+    if (info.builder && builders[info.builder]) {
         info = builders[info.builder].call(elt, info) || info;
-    if (info.anchor == null || elt.hasAttribute("data-tooltip-anchor"))
+    }
+    if (info.anchor == null || elt.hasAttribute("data-tooltip-anchor")) {
         info.anchor = elt.getAttribute("data-tooltip-anchor") || "v";
-    if (info.type == null || elt.hasAttribute("data-tooltip-type"))
+    }
+    if (info.type == null || elt.hasAttribute("data-tooltip-type")) {
         info.type = elt.getAttribute("data-tooltip-type");
-    if (info.className == null || elt.hasAttribute("data-tooltip-class"))
+    }
+    if (info.className == null || elt.hasAttribute("data-tooltip-class")) {
         info.className = elt.getAttribute("data-tooltip-class") || "dark";
-    if (elt.hasAttribute("data-tooltip"))
+    }
+    if (elt.hasAttribute("data-tooltip")) {
         info.content = elt.getAttribute("data-tooltip");
-    else if (info.content == null && elt.hasAttribute("aria-label"))
+    } else if (info.content != null) {
+        // leave alone
+    } else if (elt.hasAttribute("aria-describedby")
+               && elt.ariaDescribedByElements
+               && elt.ariaDescribedByElements.length === 1
+               && hasClass(elt.ariaDescribedByElements[0], "bubble")) {
+        info.contentElement = elt.ariaDescribedByElements[0];
+    } else if (elt.hasAttribute("aria-label")) {
         info.content = elt.getAttribute("aria-label");
-    else if (info.content == null && elt.hasAttribute("title"))
+    } else if (elt.hasAttribute("title")) {
         info.content = elt.getAttribute("title");
+    }
     return info;
 }
 
@@ -2958,119 +3012,150 @@ function show_tooltip(info) {
         return null;
     }
 
-    var $self = $(this);
-    info = prepare_info($self[0], $.extend({}, info || {}));
-    info.element = this;
+    const self = this;
+    info = prepare_info(self, $.extend({}, info || {}));
 
-    var tt, bub = null, to = null, near = null,
-        refcount = 0, content = info.content;
+    let bub = null, to = null, refcount = 0;
 
     function close() {
         to = clearTimeout(to);
+        if (bub) {
+            bub.element().removeEventListener("pointerenter", tt.enter);
+            bub.element().removeEventListener("pointerleave", tt.leave);
+            bub.remove();
+        }
         bub && bub.remove();
-        $self.removeData("tooltipState");
+        tooltip_map.delete(self);
         if (global_tooltip === tt) {
             global_tooltip = null;
         }
     }
 
-    function show_bub() {
-        if (content && !bub) {
-            bub = make_bubble(content, {color: "tooltip ".concat(info.className, info.type === "focus" ? " position-absolute" : ""), anchor: info.anchor});
-            near = info.near || info.element;
-            bub.near(near).hover(tt.enter, tt.exit);
-        } else if (content) {
-            bub.html(content);
-        } else if (bub) {
-            bub && bub.remove();
-            bub = near = null;
-        }
-    }
-
-    function complete(new_content) {
-        if (new_content instanceof HPromise) {
-            new_content.then(complete);
-        } else {
-            var tx = global_tooltip;
-            content = new_content;
-            if (tx
-                && tx._element === info.element
-                && tx.html() === content
-                && !info.done) {
-                tt = tx;
-            } else {
-                tx && tx.close();
-                $self.data("tooltipState", tt);
-                show_bub();
-                global_tooltip = tt;
-            }
-        }
-    }
-
-    tt = {
+    let tt = {
         enter: function () {
             to = clearTimeout(to);
             ++refcount;
             return tt;
         },
-        exit: function () {
-            var delay = info.type === "focus" ? 0 : 200;
+        leave: function () {
+            const delay = info.type === "focus" ? 0 : 200;
             to = clearTimeout(to);
-            if (--refcount == 0 && info.type !== "sticky")
+            if (--refcount === 0 && info.type !== "sticky") {
                 to = setTimeout(close, delay);
+            }
             return tt;
         },
         close: close,
-        _element: $self[0],
-        html: function (new_content) {
-            if (new_content === undefined) {
-                return content;
-            } else {
-                content = new_content;
-                show_bub();
-                return tt;
-            }
-        },
-        text: function (new_text) {
-            return tt.html(escape_html(new_text));
+        owner: function () {
+            return self;
         },
         near: function () {
-            return near;
+            return info.near || self;
+        },
+        bubbleElement: function () {
+            return bub ? bub.element() : null;
         }
     };
 
-    complete(content);
+    function complete(content) {
+        if (content instanceof HPromise) {
+            content.then(complete);
+            return;
+        }
+
+        let tx = global_tooltip;
+        if (tx
+            && tx.owner() === info.element
+            && (info.contentElement
+                ? info.contentElement === tx.bubbleElement()
+                : content === tx.html())
+            && !info.done) {
+            tt = tx;
+            return;
+        }
+        if (tx) {
+            tx.close();
+            tx = null;
+        }
+
+        const bubinfo = {class: `tooltip ${info.className}`, anchor: info.anchor};
+        if (info.type === "focus") {
+            bubinfo.class += " position-absolute";
+        }
+        if (info.contentElement) {
+            bubinfo.element = info.contentElement;
+        } else if (content) {
+            bubinfo.content = content;
+        } else {
+            return;
+        }
+
+        tooltip_map.set(self, tt);
+        bub = make_bubble(bubinfo).near(info.near || self);
+        bub.element().addEventListener("pointerenter", tt.enter);
+        bub.element().addEventListener("pointerleave", tt.leave);
+        global_tooltip = tt;
+    }
+    complete(info.content);
     info.done = true;
     return tt;
 }
 
 function ttenter() {
-    var tt = $(this).data("tooltipState") || show_tooltip.call(this);
+    const tt = tooltip_map.get(this) || show_tooltip.call(this);
     tt && tt.enter();
 }
 
 function ttleave() {
-    var tt = $(this).data("tooltipState");
-    tt && tt.exit();
+    const tt = tooltip_map.get(this);
+    tt && tt.leave();
 }
 
 function tooltip() {
     removeClass(this, "need-tooltip");
-    var tt = this.getAttribute("data-tooltip-type");
-    if (tt === "focus")
-        $(this).on("focus", ttenter).on("blur", ttleave);
-    else
-        $(this).hover(ttenter, ttleave);
+    const tt = this.getAttribute("data-tooltip-type");
+    if (tt === "within") {
+        tooltip_within(this);
+    } else {
+        this.addEventListener("focusin", ttenter);
+        this.addEventListener("focusout", ttleave);
+        if (tt !== "focus") {
+            this.addEventListener("pointerenter", ttenter);
+            this.addEventListener("pointerleave", ttleave);
+        }
+    }
 }
+
+function tooltip_within(elt) {
+    const info = prepare_info(elt, {});
+    function enter(evt) {
+        const wte = evt.target.closest(".want-tooltip");
+        if (wte) {
+            const tt = tooltip_map.get(wte) || show_tooltip.call(wte, info);
+            tt && tt.enter();
+        }
+    }
+    function leave(evt) {
+        const wte = evt.target.closest(".want-tooltip");
+        wte && ttleave.call(wte);
+    }
+    elt.addEventListener("mouseover", enter);
+    elt.addEventListener("mouseout", leave);
+    elt.addEventListener("focusin", enter);
+    elt.addEventListener("focusout", leave);
+}
+
 tooltip.close = function (e) {
-    var tt = e ? $(e).data("tooltipState") : global_tooltip;
+    const tt = e ? tooltip_map.get(e) : global_tooltip;
     tt && tt.close();
 };
+
 tooltip.close_under = function (e) {
     if (global_tooltip && e.contains(global_tooltip.near())) {
         global_tooltip.close();
     }
 };
+
 tooltip.add_builder = function (name, f) {
     builders[name] = f;
 };
@@ -3089,14 +3174,16 @@ HtmlCollector.prototype.push = function (open, close) {
         this.close.push(close);
         this.html = "";
         return this.open.length - 1;
-    } else
+    } else {
         this.html += open;
+    }
     return this;
 };
 HtmlCollector.prototype.pop = function (pos) {
     var n = this.open.length;
-    if (pos == null)
+    if (pos == null) {
         pos = Math.max(0, n - 1);
+    }
     while (n > pos) {
         --n;
         this.html = this.open[n] + this.html + this.close[n];
@@ -3128,11 +3215,15 @@ HtmlCollector.prototype.clear = function () {
     return this;
 };
 HtmlCollector.next_input_id = (function () {
-var id = 1;
-return function () {
-    var s;
+let id = 1;
+return function (pfx) {
+    if (pfx && !document.getElementById(pfx)) {
+        return pfx;
+    }
+    pfx = pfx || "k-";
+    let s;
     do {
-        s = "k-" + id++;
+        s = pfx + id++;
     } while (document.getElementById(s));
     return s;
 };
@@ -3366,9 +3457,8 @@ function form_submitter(form, evt) {
     } else if (form.hotcrpSubmitter
                && form.hotcrpSubmitter[1] >= (new Date).getTime() - 10) {
         return form.hotcrpSubmitter[0];
-    } else {
-        return null;
     }
+    return null;
 }
 
 handle_ui.on("js-mark-submit", function () {
@@ -3380,7 +3470,8 @@ handle_ui.on("js-mark-submit", function () {
 // banner
 hotcrp.banner = (function () {
 function resize(b) {
-    const offs = document.querySelectorAll(".need-banner-offset");
+    const offs = document.querySelectorAll(".need-banner-offset"),
+        pbody = document.getElementById("p-page");
     if (b) {
         const h = b.offsetHeight;
         for (const e of offs) {
@@ -3404,13 +3495,13 @@ function resize(b) {
                 e.style.top = (h + parseFloat(bo)) + "px";
             }
         }
-        document.body.style.minHeight = "calc(100vh - " + h + "px)";
+        document.body.style.minHeight = pbody.style.minHeight = "calc(100dvh - " + h + "px)";
     } else {
         for (const e of offs) {
             const bo = e.getAttribute("data-banner-offset") || "";
             e.style[bo.startsWith("B") ? "bottom" : "top"] = null;
         }
-        document.body.style.minHeight = null;
+        document.body.style.minHeight = pbody.style.minHeight = null;
     }
 }
 return {
@@ -3448,6 +3539,19 @@ return {
     }
 };
 })(jQuery);
+
+
+// alerts
+handle_ui.on("js-dismiss-alert", function (evt) {
+    const self = this;
+    this.disabled = true;
+    $.ajax(hoturl("=api/dismissalert", {alertid: this.getAttribute("data-alertid")}), {
+        method: "POST", success: function (data) {
+            if (data.ok)
+                self.closest(".msg").remove();
+        }
+    });
+});
 
 
 // initialization and tracker
@@ -3556,9 +3660,8 @@ function tracker_find(trackerid) {
         return null;
     } else if (dl.tracker && dl.tracker.trackerid === trackerid) {
         return dl.tracker;
-    } else {
-        return null;
     }
+    return null;
 }
 
 function tracker_status() {
@@ -3573,10 +3676,10 @@ function tracker_status() {
     }
 }
 
-var tracker_map = [["is_manager", "is-manager", "Administrator"],
-                   ["is_lead", "is-lead", "Discussion lead"],
-                   ["is_reviewer", "is-reviewer", "Reviewer"],
-                   ["is_conflict", "is-conflict", "Conflict"]];
+const tracker_map = [["is_manager", "is-manager", "Administrator"],
+                     ["is_lead", "is-lead", "Discussion lead"],
+                     ["is_reviewer", "is-reviewer", "Reviewer"],
+                     ["is_conflict", "is-conflict", "Conflict"]];
 
 function tracker_show_elapsed() {
     if (tracker_timer) {
@@ -4357,55 +4460,53 @@ hotcrp.onload = (function ($) {
 })(jQuery);
 
 
+function fold_map(e, type) {
+    let s = e.getAttribute("data-fold-" + (type || "storage"));
+    if (s && (s.charAt(0) === "{" || s.charAt(0) === "[")) {
+        s = JSON.parse(s);
+    } else if (s) {
+        s = [s];
+    }
+    const m = {};
+    for (const k in s || {}) {
+        const v = s[k];
+        m[k] = v.charAt(0) === "-" ? [v.substring(1), true] : [v, false];
+    }
+    return m;
+}
+
 function fold_storage() {
     if (!this || this === window || this === hotcrp) {
         $(".need-fold-storage").each(fold_storage);
-    } else {
-        removeClass(this, "need-fold-storage");
-        var sn = this.getAttribute("data-fold-storage"), smap, k;
-        if (sn.charAt(0) === "-") { // default is open, use storage to close
-            sn = sn.substring(1);
-        }
-        if (sn.charAt(0) === "{" || sn.charAt(0) === "[") {
-            smap = JSON.parse(sn) || {};
-        } else {
-            var m = this.className.match(/\bfold(\d*)[oc]\b/),
-                n = m[1] === "" ? 0 : +m[1];
-            smap = {};
-            smap[n] = sn;
-        }
+        return;
+    }
+    removeClass(this, "need-fold-storage");
+    removeClass(this, "fold-storage-hidden");
+    const smap = fold_map(this),
         sn = hotcrp.wstorage.json(true, "fold") || hotcrp.wstorage.json(false, "fold") || {};
-        for (k in smap) {
-            if (sn[smap[k]]) {
-                foldup.call(this, null, {open: true, n: +k});
-            } else if (sn[smap[k]] != null) {
-                foldup.call(this, null, {open: false, n: +k});
-            }
+    for (const k in smap) {
+        if (sn[smap[k][0]] != null) {
+            foldup.call(this, null, {open: !sn[smap[k][0]], n: +k});
         }
     }
-}
-
-function fold_session_for(foldnum, type) {
-    var s = this.getAttribute("data-fold-" + type), p, flip = false;
-    if (s && (s.charAt(0) === "{" || s.charAt(0) === "[")) {
-        s = (JSON.parse(s) || {})[foldnum];
-    }
-    if (s && s.charAt(0) === "-") {
-        s = s.substring(1);
-        flip = true;
-    }
-    if (s && (p = this.getAttribute("data-fold-" + type + "-prefix"))) {
-        s = p + s;
-    }
-    return s ? [s, flip] : null;
+    this.addEventListener("foldtoggle", function (evt) {
+        const info = smap[evt.detail.n || 0], wstor = hotcrp.wstorage;
+        if (!info) {
+            return;
+        }
+        let sj = wstor.json(true, "fold") || {};
+        evt.detail.open === info[1] ? delete sj[info[0]] : sj[info[0]] = evt.detail.open ? 0 : 1;
+        wstor(true, "fold", $.isEmptyObject(sj) ? null : sj);
+        sj = wstor.json(false, "fold") || {};
+        evt.detail.open === info[1] ? delete sj[info[0]] : sj[info[0]] = evt.detail.open ? 0 : 1;
+        wstor(false, "fold", $.isEmptyObject(sj) ? null : sj);
+    });
 }
 
 function fold(elt, dofold, foldnum) {
-    var i, opentxt, closetxt, wasopen, foldnumid, s;
-
     // find element
     if (elt && ($.isArray(elt) || elt.jquery)) {
-        for (i = 0; i < elt.length; i++) {
+        for (let i = 0; i < elt.length; i++) {
             fold(elt[i], dofold, foldnum);
         }
         return false;
@@ -4417,27 +4518,27 @@ function fold(elt, dofold, foldnum) {
     }
 
     // find fold number, fold/unfold
-    foldnumid = foldnum ? foldnum : "";
-    opentxt = "fold" + foldnumid + "o";
-    closetxt = "fold" + foldnumid + "c";
+    const foldnumid = foldnum ? foldnum : "",
+        opentxt = "fold" + foldnumid + "o",
+        closetxt = "fold" + foldnumid + "c",
+        wasopen = hasClass(elt, opentxt);
 
-    // check current fold state
-    wasopen = hasClass(elt, opentxt);
     if (dofold == null || !dofold != wasopen) {
         // perform fold
         toggleClass(elt, opentxt, !wasopen);
         toggleClass(elt, closetxt, wasopen);
 
         // check for session
-        if ((s = fold_session_for.call(elt, foldnum, "storage"))) {
+        let s = fold_map(elt)[foldnum];
+        if (s) {
             const wstor = hotcrp.wstorage;
             let sj = wstor.json(true, "fold") || {};
-            wasopen === !s[1] ? delete sj[s[0]] : sj[s[0]] = wasopen ? 0 : 1;
+            wasopen === !s[1] ? delete sj[s[0]] : sj[s[0]] = wasopen ? 1 : 0;
             wstor(true, "fold", $.isEmptyObject(sj) ? null : sj);
             sj = wstor.json(false, "fold") || {};
-            wasopen === !s[1] ? delete sj[s[0]] : sj[s[0]] = wasopen ? 0 : 1;
+            wasopen === !s[1] ? delete sj[s[0]] : sj[s[0]] = wasopen ? 1 : 0;
             wstor(false, "fold", $.isEmptyObject(sj) ? null : sj);
-        } else if ((s = fold_session_for.call(elt, foldnum, "session"))) {
+        } else if ((s = fold_map(elt, "session")[foldnum])) {
             $.post(hoturl("=api/session", {v: s[0] + (wasopen ? "=1" : "=0")}));
         }
     }
@@ -4446,15 +4547,10 @@ function fold(elt, dofold, foldnum) {
 }
 
 function foldup(evt, opts) {
-    var e = this, wantopen, m, x;
     if (typeof opts === "number") {
         opts = {n: opts};
     } else if (!opts) {
         opts = {};
-    }
-    if (!("open" in opts) && "f" in opts) {
-        log_jserror("opts.f provided, not opts.open");
-        opts.open = !opts.f;
     }
     if (this.tagName === "DIV"
         && evt
@@ -4462,69 +4558,108 @@ function foldup(evt, opts) {
         && !opts.required) {
         return;
     }
-    if (!("n" in opts)
-        && e.hasAttribute("data-fold-target")
-        && (m = e.getAttribute("data-fold-target").match(/^(\D[^#]*$|.*(?=#)|)#?(\d*)([couU]?)$/))) {
-        if (m[1] !== "") {
-            e = document.getElementById(m[1]);
+    let acting;
+    if (this.tagName === "DIV"
+        && (hasClass(this, "js-foldup")
+            || hasClass(this, "collapsed")
+            || hasClass(this, "expanded"))) {
+        acting = this.querySelector("[aria-expanded]");
+    }
+    acting = acting || this;
+    // determine targets
+    // XXX only partial support for ARIA method
+    let foldname, m;
+    if (acting.ariaControlsElements && acting.ariaControlsElements.length > 0) {
+        if (!("open" in opts)) {
+            opts.open = acting.ariaExpanded !== "true";
         }
-        opts.n = parseInt(m[2]) || 0;
-        if (!("open" in opts) && m[3] !== "") {
-            if (this.tagName === "INPUT"
-                && input_is_checkboxlike(this)
-                && (this.checked ? m[3] === "u" : m[3] === "U")) {
-                m[3] = "c";
-            }
-            opts.open = m[3] !== "c";
-        }
-    }
-    var foldname = "fold" + (opts.n || "");
-    while (e && ((!hasClass(e, "has-fold") && (!e.id || !e.id.startsWith("fold")))
-                 || (opts.n != null && !hasClass(e, foldname + "c") && !hasClass(e, foldname + "o")))) {
-        e = e.parentNode;
-    }
-    if (!e) {
-        return true;
-    }
-    if (opts.n == null) {
-        x = classList(e);
-        for (var i = 0; i !== x.length; ++i) {
-            if (x[i].substring(0, 4) === "fold"
-                && (m = x[i].match(/^fold(\d*)[oc]$/))
-                && (opts.n == null || +m[1] < opts.n)) {
-                opts.n = +m[1];
-                foldname = "fold" + (opts.n || "");
+        for (const e of acting.ariaControlsElements) {
+            if (e.hidden !== !opts.open && !hasClass(e, "no-fold")) {
+                e.hidden = !opts.open;
+                e.dispatchEvent(new CustomEvent("foldtoggle", {bubbles: true, detail: opts}));
             }
         }
-    }
-    if (!("open" in opts)
-        && (this.tagName === "INPUT" || this.tagName === "SELECT" || this.tagName === "TEXTAREA")) {
-        var value = null;
-        if (this.type === "checkbox") {
-            opts.open = this.checked;
-        } else if (this.type === "radio") {
-            if (!this.checked)
-                return true;
-            value = this.value;
-        } else if (this.type === "select-one") {
-            value = this.selectedIndex < 0 ? "" : this.options[this.selectedIndex].value;
-        } else if (this.type === "text" || this.type === "textarea") {
-            opts.open = this.value !== "";
+        const p = acting.closest(".expanded, .collapsed");
+        if (p) {
+            const controls = acting.getAttribute("aria-controls");
+            for (const e of p.querySelectorAll("button[aria-expanded]")) {
+                if (e.getAttribute("aria-controls") === controls) {
+                    e.ariaExpanded = opts.open ? "true" : "false";
+                }
+            }
+            if (hasClass(p, "expanded") !== opts.open) {
+                removeClass(p, opts.open ? "collapsed" : "expanded");
+                addClass(p, opts.open ? "expanded" : "collapsed");
+                p.dispatchEvent(new CustomEvent("foldtoggle", {bubbles: true, detail: opts}));
+            }
+        } else {
+            acting.ariaExpanded = opts.open ? "true" : "false";
         }
-        if (value !== null) {
-            var vstr = e.getAttribute("data-" + foldname + "-values") || "",
-                values = $.trim(vstr) === "" ? [] : vstr.split(/\s+/);
-            opts.open = values.indexOf(value) >= 0;
+    } else {
+        let target = this;
+        if (!("n" in opts)
+            && this.hasAttribute("data-fold-target")
+            && (m = this.getAttribute("data-fold-target").match(/^(\D[^#]*$|.*(?=#)|)#?(\d*)([couU]?)$/))) {
+            if (m[1] !== "") {
+                target = document.getElementById(m[1]);
+            }
+            opts.n = parseInt(m[2]) || 0;
+            if (!("open" in opts) && m[3] !== "") {
+                if (this.tagName === "INPUT"
+                    && input_is_checkboxlike(this)
+                    && (this.checked ? m[3] === "u" : m[3] === "U")) {
+                    m[3] = "c";
+                }
+                opts.open = m[3] !== "c";
+            }
         }
-    }
-    wantopen = hasClass(e, foldname + "c");
-    if (!("open" in opts) || !!opts.open === wantopen) {
-        opts.open = wantopen;
-        fold(e, !wantopen, opts.n || 0);
-        $(e).trigger($.Event("foldtoggle", {which: opts}));
-    }
-    if (this.hasAttribute("aria-expanded")) {
-        this.setAttribute("aria-expanded", wantopen ? "true" : "false");
+        foldname = "fold" + (opts.n || "");
+        while (target && ((!hasClass(target, "has-fold") && (!target.id || !target.id.startsWith("fold")))
+                          || (opts.n != null && !hasClass(target, foldname + "c") && !hasClass(target, foldname + "o")))) {
+            target = target.parentNode;
+        }
+        if (!target) {
+            return true;
+        }
+        if (opts.n == null) {
+            for (const cl of classList(target)) {
+                if (cl.substring(0, 4) === "fold"
+                    && (m = cl.match(/^fold(\d*)[oc]$/))
+                    && (opts.n == null || +m[1] < opts.n)) {
+                    opts.n = +m[1];
+                    foldname = "fold" + (opts.n || "");
+                }
+            }
+        }
+        if (!("open" in opts)
+            && (this.tagName === "INPUT" || this.tagName === "SELECT" || this.tagName === "TEXTAREA")) {
+            let value = null;
+            if (this.type === "checkbox") {
+                opts.open = this.checked;
+            } else if (this.type === "radio") {
+                if (!this.checked)
+                    return true;
+                value = this.value;
+            } else if (this.type === "select-one") {
+                value = this.selectedIndex < 0 ? "" : this.options[this.selectedIndex].value;
+            } else if (this.type === "text" || this.type === "textarea") {
+                opts.open = this.value !== "";
+            }
+            if (value !== null) {
+                const vstr = target.getAttribute("data-" + foldname + "-values") || "",
+                    values = $.trim(vstr) === "" ? [] : vstr.split(/\s+/);
+                opts.open = values.indexOf(value) >= 0;
+            }
+        }
+        const wantopen = hasClass(target, foldname + "c");
+        if (!("open" in opts) || !!opts.open === wantopen) {
+            opts.open = wantopen;
+            fold(target, !wantopen, opts.n || 0);
+            $(target).trigger($.Event("foldtoggle", {detail: opts}));
+        }
+        if (this.hasAttribute("aria-expanded")) {
+            this.ariaExpanded = wantopen ? "true" : "false";
+        }
     }
     if (evt
         && typeof evt === "object"
@@ -4537,24 +4672,25 @@ function foldup(evt, opts) {
 
 handle_ui.on("js-foldup", foldup);
 handle_ui.on("foldtoggle.js-fold-focus", function (evt) {
-    if (evt.which.nofocus)
+    if (evt.detail.nofocus)
         return;
-    var ns = evt.which.n || "";
-    if (!hasClass(this, "fold".concat(ns, "c"))
-        && !hasClass(this, "fold".concat(ns, "o")))
+    var ns = evt.detail.n || "";
+    if (!hasClass(this, `fold${ns}c`)
+        && !hasClass(this, `fold${ns}o`)) {
         return;
-    if (evt.which.open) {
+    }
+    if (evt.open) {
         if (!document.activeElement
             || !this.contains(document.activeElement)
             || !document.activeElement.offsetParent) {
-            focus_within(this, ".fx".concat(ns, " *"));
+            focus_within(this, `.fx${ns} *`);
         }
     } else if (document.activeElement
                && this.contains(document.activeElement)
                && document.activeElement.closest(".fx" + ns)) {
-        focus_within(this, ":not(.fx".concat(ns, " *)"), true);
+        focus_within(this, `:not(.fx${ns} *)`, true);
     }
-    evt.which.nofocus = true;
+    evt.detail.nofocus = true;
 });
 $(function () {
     $(".uich.js-foldup").each(function () {
@@ -4588,22 +4724,7 @@ function $svg(tag, attr) {
     return e;
 }
 
-function svge() {
-    var e = document.createElementNS("http://www.w3.org/2000/svg", arguments[0]), i, t;
-    for (i = 1; i < arguments.length; ) {
-        t = arguments[i];
-        if (typeof t === "string") {
-            e.setAttribute(t, arguments[i + 1]);
-            i += 2;
-        } else {
-            e.append(t);
-            ++i;
-        }
-    }
-    return e;
-}
-
-function svge_use_licon(name) {
+function $svg_use_licon(name) {
     return $svg("svg", {class: "licon", width: "1em", height: "1em", viewBox: "0 0 64 64", preserveAspectRatio: "none"},
         $svg("use", {href: "#i-def-" + name}));
 }
@@ -4647,36 +4768,41 @@ function make_expander_element(foldnum) {
     function mksvgp(d) {
         return $svg("svg", {class: "licon", width: "0.75em", height: "0.75em", viewBox: "0 0 16 16", preserveAspectRatio: "none"}, $svg("path", {d: d}));
     }
+    let fx = foldnum == null ? "ifx" : "fx" + foldnum,
+        fn = foldnum == null ? "ifnx" : "fn" + foldnum;
     return $e("span", "expander",
-        $e("span", "in0 fx" + foldnum, mksvgp("M1 1L8 15L15 1z")),
-        $e("span", "in1 fn" + foldnum, mksvgp("M1 1L15 8L1 15z")));
+        $e("span", fx, mksvgp("M1 1L8 15L15 1z")),
+        $e("span", fn, mksvgp("M1 1L15 8L1 15z")));
 }
 
 
 // special-case folding for author table
 handle_ui.on("js-aufoldup", function (evt) {
     if (evt.target === this || evt.target.tagName !== "A") {
-        var e = $$("foldpaper"),
+        const e = $$("foldpaper"),
             m9 = e.className.match(/\bfold9([co])\b/),
             m8 = e.className.match(/\bfold8([co])\b/);
-        if (m9 && (!m8 || m8[1] == "o"))
+        if (m9 && (!m8 || m8[1] === "o")) {
             foldup.call(e, evt, {n: 9, required: true});
-        if (m8 && (!m9 || m8[1] == "c" || m9[1] == "o")) {
+        }
+        if (m8 && (!m9 || m8[1] === "c" || m9[1] === "o")) {
             foldup.call(e, evt, {n: 8, required: true});
-            if (m8[1] == "o" && $$("foldpscollab"))
-                fold("pscollab", 1);
+            const psc = document.getElementById("s-collaborators");
+            psc && (psc.hidden = hasClass(e, "fold8c"));
         }
     }
 });
 
 handle_ui.on("js-click-child", function (evt) {
-    if (evt.target.closest("a[href], input, select, textarea, button"))
+    if (evt.target.closest("a[href], input, select, textarea, button")) {
         return;
-    var a = this.querySelector("a[href], input[type=checkbox], input[type=radio]");
-    if (!a || a.disabled)
+    }
+    const a = this.querySelector("a[href], input[type=checkbox], input[type=radio]");
+    if (!a || a.disabled) {
         return;
+    }
     if (evt.type === "click") {
-        var newEvent = new MouseEvent("click", {
+        const newEvent = new MouseEvent("click", {
             view: window, bubbles: true, cancelable: true,
             button: evt.button, buttons: evt.buttons,
             ctrlKey: evt.ctrlKey, shiftKey: evt.shiftKey,
@@ -4716,16 +4842,23 @@ push_history_state.ever = false;
 // line links
 
 handle_ui.on("lla", function () {
-    var e = this.closest(".linelink"),
-        f = e.closest(".linelinks");
-    $(f).find(".linelink").removeClass("active");
-    addClass(e, "active");
-    $(e).trigger($.Event("foldtoggle", {which: {open: true}}));
-    focus_within(e, ".lld *");
+    const ll = this.closest(".linelink"),
+        lls = ll.closest(".linelinks"),
+        lla = lls.querySelector(".linelink.active");
+    if (lla) {
+        lla.querySelector(".lld").hidden = true;
+        lla.querySelector("[aria-selected]").ariaSelected = "false";
+        removeClass(lla, "active");
+    }
+    ll.querySelector(".lld").hidden = false;
+    this.ariaSelected = "true";
+    addClass(ll, "active");
+    $(ll).trigger($.Event("foldtoggle", {detail: {open: true}}));
+    focus_within(ll, ".lld *");
 });
 
 $(function () {
-    $(".linelink.active").trigger($.Event("foldtoggle", {which: {open: true}}));
+    $(".linelink.active").trigger($.Event("foldtoggle", {detail: {open: true}}));
 });
 
 
@@ -4745,7 +4878,7 @@ function tla_select(self, focus) {
     addClass(tll, "active");
     tll.setAttribute("aria-selected", "true");
     push_history_state(this.href);
-    $(e).trigger($.Event("foldtoggle", {which: {open: true}}));
+    $(e).trigger($.Event("foldtoggle", {detail: {open: true}}));
     focus && focus_within(e);
 }
 
@@ -4877,69 +5010,174 @@ $(function () {
 (function ($) {
 const builders = {};
 
-function dropmenu_close() {
-    const modal = $$("dropmenu-modal");
-    modal && modal.remove();
-    $("details.dropmenu-details").each(function () { this.open = false; });
+function dropmenu_open(mb, dir) {
+    let was_hidden = false;
+    if (hasClass(mb, "need-dropmenu")) {
+        $.each(classList(mb), function (i, c) {
+            if (builders[c])
+                builders[c].call(mb);
+        });
+        was_hidden = true;
+    }
+    const edetails = mb.closest(".dropmenu-details"),
+        econtainer = edetails.lastElementChild;
+    was_hidden = was_hidden || econtainer.hidden;
+    hotcrp.tooltip.close();
+    if (was_hidden) {
+        dropmenu_close();
+        const modal = $e("div", "modal transparent");
+        modal.id = "dropmenu-modal";
+        edetails.parentElement.insertBefore(modal, edetails.nextSibling);
+        modal.addEventListener("click", dropmenu_close, false);
+        econtainer.hidden = false;
+    }
+    const emenu = econtainer.querySelector(".dropmenu");
+    if (hasClass(emenu, "need-dropmenu-events")) {
+        dropmenu_events(emenu);
+    }
+    dropmenu_focus(emenu, dir || "first");
+    mb.ariaExpanded = "true";
 }
 
-handle_ui.on("click.js-dropmenu-open", function (evt) {
-    let modal = $$("dropmenu-modal"), esummary = this;
-    if (hasClass(esummary, "need-dropmenu")) {
-        $.each(classList(esummary), function (i, c) {
-            if (builders[c])
-                builders[c].call(esummary, evt);
-        });
-    }
-    if (esummary.nodeName === "BUTTON") {
-        esummary = esummary.closest("summary");
-    }
-    const edetails = esummary.parentElement;
-    hotcrp.tooltip.close();
-    if (!edetails.open) {
-        if (!modal) {
-            modal = $e("div", "modal transparent");
-            modal.id = "dropmenu-modal";
-            edetails.parentElement.insertBefore(modal, edetails.nextSibling);
-            modal.addEventListener("click", dropmenu_close, false);
-        }
-        edetails.open = true;
-    } else if (this.tagName === "BUTTON") {
-        modal && modal.remove();
-        edetails.open = false;
-    }
-    evt.preventDefault();
-    handle_ui.stopPropagation(evt);
-});
+function dropmenu_events(emenu) {
+    removeClass(emenu, "need-dropmenu-events");
+    emenu.addEventListener("click", dropmenu_click);
+    emenu.addEventListener("mouseover", dropmenu_mouseover);
+    emenu.addEventListener("keydown", dropmenu_keydown);
+    emenu.addEventListener("focusout", dropmenu_focusout);
+    emenu.tabIndex = -1;
+}
 
-handle_ui.on("click.dropmenu", function (evt) {
-    var tgt = evt.target, li, es, bs;
+function dropmenu_focus(emenu, which) {
+    const items = emenu.querySelectorAll("[role=\"menuitem\"]");
+    if (which === "first") {
+        which = items[0];
+    } else if (which === "last") {
+        which = items[items.length - 1];
+    } else if (which === "next" || which === "prev") {
+        let current = 0;
+        while (current < items.length && items[current].tabIndex !== 0) {
+            ++current;
+        }
+        if (current >= items.length) {
+            which = items[which === "next" ? 0 : items.length - 1];
+        } else if (which === "next") {
+            which = items[(current + 1) % items.length];
+        } else {
+            which = items[(current + items.length - 1) % items.length];
+        }
+    }
+    for (const e of items) {
+        if (e === which) {
+            e.tabIndex = 0;
+            const li = e.closest("li");
+            addClass(li, "focus");
+            if (e.ariaDisabled === "true") {
+                addClass(li, "focus-disabled");
+            }
+            e.focus();
+        } else if (e.tabIndex !== -1) {
+            e.tabIndex = -1;
+            removeClass(e.closest("li"), "focus");
+        }
+    }
+}
+
+function dropmenu_click(evt) {
+    const tgt = evt.target;
+    let li, mi;
     if (tgt.tagName === "A"
         || tgt.tagName === "BUTTON"
-        || tgt.closest("ul") !== this) {
+        || !(li = tgt.closest("li"))
+        || li.parentElement !== this
+        || !(mi = li.querySelector("[role=\"menuitem\"]"))
+        || mi.ariaDisabled === "true") {
         return;
     }
-    li = tgt.closest("li");
-    if (!li) {
-        return;
-    }
-    es = li.querySelectorAll("button");
-    if (es.length !== 1
-        && (bs = li.querySelectorAll("a")).length === 1) {
-        es = bs;
-    }
-    if (es.length !== 1) {
-        return;
-    }
-    if (es[0].tagName === "A"
-        && es[0].href
+    if (mi.tagName === "A"
+        && mi.href
         && !event_key.is_default_a(evt)) {
-        window.open(es[0].href, "_blank", "noopener");
+        window.open(mi.href, "_blank", "noopener");
     } else {
-        es[0].click();
+        mi.click();
         evt.preventDefault();
         handle_ui.stopPropagation(evt);
     }
+}
+
+function dropmenu_mouseover(evt) {
+    const li = evt.target.closest("li");
+    let mi;
+    if (!li
+        || li.parentElement !== this
+        || hasClass(li, "focus")
+        || !(mi = li.querySelector("[role=\"menuitem\"]"))) {
+        return;
+    }
+    dropmenu_focus(this, mi);
+}
+
+function dropmenu_keydown(evt) {
+    const key = event_key(evt);
+    if (key === "ArrowDown") {
+        dropmenu_focus(this, "next");
+    } else if (key === "ArrowUp") {
+        dropmenu_focus(this, "prev");
+    } else if (key === "Home" || key === "PageUp") {
+        dropmenu_focus(this, "first");
+    } else if (key === "End" || key === "PageDown") {
+        dropmenu_focus(this, "last");
+    } else if (key === "Escape") {
+        dropmenu_close(true);
+    } else {
+        return;
+    }
+    evt.preventDefault();
+    handle_ui.stopPropagation(evt);
+}
+
+function dropmenu_focusout(evt) {
+    if (!evt.relatedTarget
+        || evt.relatedTarget.closest(".dropmenu") !== this) {
+        dropmenu_close();
+    }
+}
+
+function dropmenu_close(focus) {
+    const modal = $$("dropmenu-modal");
+    if (!modal) {
+        return;
+    }
+    modal.remove();
+    for (const dm of document.querySelectorAll(".dropmenu-container")) {
+        if (dm.hidden) {
+            continue;
+        }
+        dm.hidden = true;
+        const mb = dm.closest(".dropmenu-details")
+            .querySelector(".js-dropmenu-button");
+        if (mb) {
+            mb.ariaExpanded = "false";
+            if (focus) {
+                mb.focus();
+            }
+        }
+    }
+}
+
+handle_ui.on("click.js-dropmenu-button", function (evt) {
+    dropmenu_open(this);
+    evt.preventDefault();
+});
+
+handle_ui.on("keydown.js-dropmenu-button", function (evt) {
+    const k = event_key(evt);
+    if ((k !== "ArrowUp" && k !== "ArrowDown")
+        || event_key.modcode(evt) !== 0) {
+        return;
+    }
+    dropmenu_open(this, k === "ArrowUp" ? "last" : "first");
+    evt.preventDefault();
 });
 
 hotcrp.dropmenu = {
@@ -4947,7 +5185,8 @@ hotcrp.dropmenu = {
         builders[s] = f;
     },
     close: function (e) {
-        if (!e || e.closest("details[open]"))
+        const dd = e && e.closest(".dropmenu-details");
+        if (!e || (dd && !dd.lastElementChild.hidden))
             dropmenu_close();
     }
 };
@@ -4995,7 +5234,8 @@ handle_ui.on("js-keydown-enter-submit", function (evt) {
 var review_types = (function () {
 var canon = [
         null, "none", "external", "pc", "secondary",
-        "primary", "meta", "conflict", "author", "declined"
+        "primary", "meta", "conflict", "author", "declined",
+        "potential"
     ],
     tmap = {
         "0": 1, "none": 1,
@@ -5006,19 +5246,23 @@ var canon = [
         "5": 6, "meta": 6,
         "-1": 7, "conflict": 7,
         "-2": 8, "author": 8,
-        "-3": 9, "declined": 9
+        "-3": 9, "declined": 9,
+        "-4": 10, "potential": 10
     },
     selectors = [
         null, "None", "External", "Optional", "Secondary",
-        "Primary", "Metareview", "Conflict", "Author", "Declined"
+        "Primary", "Metareview", "Conflict", "Author", "Declined",
+        "Potential conflict"
     ],
     tooltips = [
         null, "No review", "External review", "Optional PC review", "Secondary review",
-        "Primary review", "Metareview", "Conflict", "Author", "Declined"
+        "Primary review", "Metareview", "Conflict", "Author", "Declined",
+        "Potential conflict"
     ],
     icon_texts = [
         null, "", "E", "P", "2",
-        "1", "M", "C", "A", "−" /* MINUS SIGN */
+        "1", "M", "C", "A", "−" /* MINUS SIGN */,
+        "?"
     ];
 function parse(s) {
     var t = tmap[s] || 0;
@@ -5042,9 +5286,8 @@ return {
             return t + "review";
         } else if (t === 7) {
             return "conflict";
-        } else {
-            return null;
         }
+        return null;
     },
     make_icon: function (s, xc) {
         var t = parse(s);
@@ -5149,7 +5392,7 @@ handle_ui.on("js-assignment-fold", function (evt) {
         if (!$x.length) {
             var name = $a.attr("data-pid") + "u" + $a.attr("data-uid"),
                 revtype = +$a.attr("data-review-type"),
-                conftype = +$a.attr("data-conflict-type"),
+                conflicted = $a[0].hasAttribute("data-conflict-type"),
                 revinprogress = $a[0].hasAttribute("data-review-in-progress"),
                 div_container = document.createElement("div"),
                 div_options = document.createElement("div");
@@ -5160,10 +5403,10 @@ handle_ui.on("js-assignment-fold", function (evt) {
                 make_radio(name, 3, "Secondary", revtype),
                 make_radio(name, 2, "Optional", revtype),
                 make_radio(name, 5, "Metareview", revtype));
-            append_round_selector(name, revtype, $a, div_options);
+            append_round_selector(name, revtype, $a, div_container);
             if (!revinprogress) {
-                div_options.append(make_radio(name, -1, "Conflict", conftype > 0 ? -1 : 0),
-                    make_radio(name, 0, "None", revtype || conftype ? -1 : 0));
+                div_options.append(make_radio(name, -1, "Conflict", conflicted ? -1 : 0),
+                    make_radio(name, 0, "None", revtype || conflicted ? -1 : 0));
             }
             $a.append(div_container);
         }
@@ -5192,7 +5435,7 @@ handle_ui.on("js-bulkassign-action", function () {
 });
 
 (function () {
-var email_info = [], email_info_at = 0;
+let searches = [], searches_at = 0;
 
 function populate(e, v, placeholder) {
     if (placeholder) {
@@ -5215,8 +5458,9 @@ handle_ui.on("input.js-email-populate", function () {
     if (!f) {
         return;
     }
-    let v = self.value.toLowerCase().trim(),
-        fn = null, ln = null, nn = null, af = null,
+
+    const v = self.value.toLowerCase().trim();
+    let fn = null, ln = null, nn = null, af = null,
         country = null, orcid = null, placeholder = false, idx;
     if (this.name === "email" || this.name === "uemail") {
         fn = f.elements.firstName;
@@ -5239,24 +5483,25 @@ handle_ui.on("input.js-email-populate", function () {
 
     function success(data) {
         data = data || {};
-        if (data.match || (data.ok && !data.email)) {
+        if (data.ok && !data._search) {
+            data._search = v;
             if (data.email) {
                 data.lemail = data.email.toLowerCase();
-            } else {
+            } else if (data.match === false) {
                 data.lemail = v + "~";
+            } else {
+                data.lemail = v; // search only matches itself
             }
-            if (!email_info.length) {
-                email_info_at = now_sec();
+            if (searches.length === 0) {
+                searches_at = now_sec();
             }
             let i = 0;
-            while (i !== email_info.length && email_info[i] !== v) {
-                i += 2;
+            while (i !== searches.length && searches[i]._search !== v) {
+                ++i;
             }
-            if (i === email_info.length) {
-                email_info.push(v, data);
-            }
+            searches[i] = data;
         }
-        if (!data.match) {
+        if (v !== data.lemail) {
             data = {};
         }
         if (self.value.trim() !== v
@@ -5287,16 +5532,16 @@ handle_ui.on("input.js-email-populate", function () {
         success(null);
         return;
     }
-    if ((email_info_at && now_sec() - email_info_at >= 3600)
-        || email_info.length > 200) {
-        email_info = [];
+    if ((searches_at && now_sec() - searches_at >= 3600)
+        || searches.length > 200) {
+        searches = [];
     }
     let i = 0;
-    while (i !== email_info.length
-           && (v < email_info[i] || v > email_info[i + 1].lemail)) {
-        i += 2;
+    while (i !== searches.length
+           && (v < searches[i]._search || v > searches[i].lemail)) {
+        ++i;
     }
-    if (i === email_info.length) {
+    if (i === searches.length) {
         let args = {email: v};
         if (hasClass(this, "want-potential-conflict")) {
             args.potential_conflict = 1;
@@ -5305,8 +5550,8 @@ handle_ui.on("input.js-email-populate", function () {
         $.ajax(hoturl("=api/user", args), {
             method: "GET", success: success
         });
-    } else if (v === email_info[i + 1].lemail) {
-        success(email_info[i + 1]);
+    } else if (v === searches[i].lemail) {
+        success(searches[i]);
     } else {
         success(null);
     }
@@ -5456,18 +5701,38 @@ hotcrp.monitor_job = function (jobid, statuselt) {
 
 // mail
 handle_ui.on("change.js-mail-recipients", function () {
-    var f = this.form,
+    const f = this.form,
         plimit = f.elements.plimit,
         toelt = f.elements.to,
-        recip = toelt.options[toelt.selectedIndex],
         subjelt = f.elements.subject,
-        bodyelt = f.elements.body;
+        bodyelt = f.elements.body,
+        recip = toelt ? toelt.options[toelt.selectedIndex] : null;
     foldup.call(this, null, {open: !plimit || plimit.checked, n: 8});
     if (!recip) {
         return;
     }
     foldup.call(this, null, {open: !hasClass(recip, "mail-want-no-papers"), n: 9});
     foldup.call(this, null, {open: hasClass(recip, "mail-want-since"), n: 10});
+
+    if (recip.hasAttribute("data-default-limit")) {
+        const deflimit = recip.getAttribute("data-default-limit"),
+            telt = f.elements.t;
+        if (telt
+            && deflimit !== telt.value
+            && deflimit !== telt.getAttribute("data-default-limit")) {
+            if (telt.lastChild.hasAttribute("data-special-limit")) {
+                telt.lastChild.remove();
+            }
+            if (!telt.querySelector(`[value="${escape_html(deflimit)}"]`)) {
+                telt.appendChild($e("option", {"value": deflimit, "data-default-limit": 1}));
+                telt.closest(".form-basic-search-type").hidden = true;
+            } else {
+                telt.closest(".form-basic-search-type").hidden = false;
+            }
+            telt.value = deflimit;
+            telt.setAttribute("data-default-limit", deflimit);
+        }
+    }
 
     if (!recip.hasAttribute("data-default-message")
         || !subjelt
@@ -5476,7 +5741,7 @@ handle_ui.on("change.js-mail-recipients", function () {
         || (bodyelt.value.trim() !== "" && input_differs(bodyelt))) {
         return;
     }
-    var dm = JSON.parse(f.getAttribute("data-default-messages")),
+    const dm = JSON.parse(f.getAttribute("data-default-messages")),
         dmt = recip.getAttribute("data-default-message");
     if (dm && dm[dmt] && dm[dmt].subject !== subjelt.value) {
         subjelt.value = subjelt.defaultValue = dm[dmt].subject;
@@ -5513,7 +5778,7 @@ handle_ui.on("js-mail-set-template", function () {
             for (let i = 0; tl[i]; ++i) {
                 tmpl.append($e("option", {value: tl[i].name, selected: !i}, tl[i].title));
             }
-            const mf = document.getElementById("mailform");
+            const mf = document.getElementById("f-mail");
             if (mf && mf.elements.template && mf.elements.template.value
                 && selected_tm(mf.elements.template.value)) {
                 tmpl.value = mf.elements.template.value;
@@ -5536,83 +5801,55 @@ handle_ui.on("js-mail-preview-choose", function () {
     toggleClass(this.closest("fieldset"), "mail-preview-unchoose", !this.checked);
 });
 
+handle_ui.on("js-mail-send-phase-0", function () {
+    addClass(document.body, "wait");
+    const sendprep = [];
+    for (const e of this.querySelectorAll("input.js-mail-preview-choose:checked")) {
+        sendprep.push(e.value);
+    }
+    this.elements.sendprep.value = sendprep.join(" ");
+});
+
 handle_ui.on("js-mail-send-phase-1", function () {
-    var send = this.querySelector("button");
+    addClass(document.body, "wait");
+    const send = this.querySelector("button");
     send.disabled = true;
     send.textContent = "Sending mail…";
-    addClass(document.body, "wait");
 });
 
 
 // autoassignment
-(function () {
-function make_pcsel_members(tag) {
-    if (tag === "__flip__")
-        return function () { return !this.checked; };
-    else if (tag === "all")
-        return function () { return true; };
-    else if (tag === "none")
-        return function () { return false; };
-    else {
-        tag = " " + tag.toLowerCase() + "#";
-        return function () {
-            var tlist = window.hotcrp_pc_tags[this.name.substr(3)] || "";
-            return tlist.indexOf(tag) >= 0;
-        };
-    }
-}
-function pcsel_tag(evt) {
-    var $g = $(this).closest(".js-radio-focus");
-    if (this.tagName === "A") {
-        $g.find("input[type=radio]").first().click();
-        var tag = this.hash.substring(4),
-            f = make_pcsel_members(tag),
-            full = true;
-        if (tag !== "all" && tag !== "none" && tag !== "__flip__"
-            && !hasClass(this, "font-weight-bold")) {
-            $g.find("input").each(function () {
-                if (this.name.startsWith("pcc") && !this.checked)
-                    return (full = false);
-            });
-        }
-        $g.find("input").each(function () {
-            if (this.name.startsWith("pcc")) {
-                var on = f.call(this);
-                if (full || on)
-                    this.checked = on;
+handle_ui.on("js-pcsel", function (evt) {
+    const g = this.closest(".js-pcsel-container");
+    if (this.tagName === "A" || this.tagName === "BUTTON") {
+        const radio = g.querySelector(".want-pcsel");
+        radio && radio.click();
+        const uids = this.getAttribute("data-uids"),
+            a = uids.split(" ");
+        let i = 0;
+        for (const e of g.querySelectorAll("input.js-pcsel")) {
+            if (e.name.startsWith("pcc")) {
+                if (uids === "flip")
+                    e.checked = !e.checked;
+                else if (e.name.substring(3) === a[i]) {
+                    e.checked = true;
+                    ++i;
+                } else
+                    e.checked = false;
             }
-        });
+        }
         evt.preventDefault();
     }
-    var tags = [], functions = {}, isall = true;
-    $g.find("a.js-pcsel-tag").each(function () {
-        var tag = this.hash.substring(4);
-        if (tag !== "none") {
-            tags.push(tag);
-            functions[tag] = make_pcsel_members(tag);
-        }
-    });
-    $g.find("input").each(function () {
-        if (this.name.startsWith("pcc") && !this.checked) {
-            isall = false;
-            for (var i = 0; i < tags.length; ) {
-                if (functions[tags[i]].call(this))
-                    tags.splice(i, 1);
-                else
-                    ++i;
-            }
-            return isall || tags.length !== 0;
-        }
-    });
-    $g.find("a.js-pcsel-tag").each(function () {
-        var tag = this.hash.substring(4);
-        if ($.inArray(tag, tags) >= 0 && (tag === "all" || !isall))
-            addClass(this, "font-weight-bold");
-        else
-            removeClass(this, "font-weight-bold");
-    });
-}
-handle_ui.on("js-pcsel-tag", pcsel_tag);
+    const a = [];
+    for (const e of g.querySelectorAll("input.js-pcsel")) {
+        if (e.name.startsWith("pcc") && e.checked)
+            a.push(e.name.substring(3));
+    }
+    const uids = a.join(" ");
+    for (const a of g.querySelectorAll("a.js-pcsel, button.js-pcsel")) {
+        toggleClass(a, "font-weight-bold", a.getAttribute("data-uids") === uids);
+    }
+});
 
 handle_ui.on("badpairs", function () {
     if (this.value !== "none") {
@@ -5635,8 +5872,6 @@ handle_ui.on(".js-badpairs-row", function (evt) {
     evt.preventDefault();
     handle_ui.stopPropagation(evt);
 });
-
-})();
 
 handle_ui.on(".js-autoassign-prepare", function () {
     var k, v, a;
@@ -5723,6 +5958,7 @@ function row_order_drag_confirm(group, defaults) {
         row_fill(row, i, defaults, changes);
     }
     row_order_autogrow(group, defaults);
+    $(changes).trigger("input");
     $(changes).trigger("change");
 }
 
@@ -5778,7 +6014,7 @@ function row_order_allow_remove(group) {
 }
 
 handle_ui.on("dragstart.row-order-draghandle", function (evt) {
-    var row = this.closest(".draggable");
+    const row = this.closest(".draggable");
     hotcrp.drag_block_reorder(this, row, function (draggable, group, changed) {
         changed && row_order_drag_confirm(group);
     }).start(evt);
@@ -5786,44 +6022,52 @@ handle_ui.on("dragstart.row-order-draghandle", function (evt) {
 
 hotcrp.dropmenu.add_builder("row-order-draghandle", function () {
     const row = this.closest(".draggable"), group = row.parentElement;
-    let details = this.closest("details"), menu;
+    let details = this.closest(".dropmenu-details"), menu;
     if (details) {
         menu = details.lastElementChild.firstChild;
         menu.replaceChildren();
     } else {
-        menu = $e("ul", "uic dropmenu");
-        details = $e("details", "dropmenu-details",
-            $e("summary"),
-            $e("div", "dropmenu-container dropmenu-draghandle", menu));
-        details.setAttribute("role", "menu");
+        details = $e("div", "dropmenu-details");
         this.replaceWith(details);
-        details.firstChild.append(this);
+        menu = $e("ul", "dropmenu need-dropmenu-events");
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", "Reordering menu");
+        const menucontainer = $e("div", "dropmenu-container dropmenu-draghandle", menu);
+        menucontainer.hidden = true;
+        details.append(this, menucontainer);
     }
     menu.append($e("li", "disabled", "(Drag to reorder)"));
-    function buttonli(className, attr, text) {
-        attr["class"] = className;
-        attr["type"] = "button";
-        return $e("li", attr.disabled ? "disabled" : "has-link", $e("button", attr, text));
+    function buttonli(className, text, xattr) {
+        const attr = {class: className, type: "button", role: "menuitem"};
+        if (xattr && xattr.disabled) {
+            attr["aria-disabled"] = "true";
+            attr.class += " disabled";
+        }
+        return $e("li", {role: "none"}, $e("button", attr, text));
     }
     let sib = row.previousElementSibling;
-    menu.append(buttonli("link ui row-order-dragmenu move-up", {
+    menu.append(buttonli("qx ui row-order-dragmenu move-up", "Move up", {
         disabled: !sib || hasClass(sib, "row-order-barrier")
-    }, "Move up"));
+    }));
     sib = row.nextElementSibling;
-    menu.append(buttonli("link ui row-order-dragmenu move-down", {
+    menu.append(buttonli("qx ui row-order-dragmenu move-down", "Move down", {
         disabled: !sib || hasClass(sib, "row-order-barrier")
-    }, "Move down"));
+    }));
     if (group.hasAttribute("data-row-template")) {
         const max_rows = +group.getAttribute("data-max-rows") || 0;
         if (max_rows <= 0 || row_order_count(group) < max_rows) {
-            menu.append(buttonli("link ui row-order-dragmenu insert-above", {}, "Insert row above"));
-            menu.append(buttonli("link ui row-order-dragmenu insert-below", {}, "Insert row below"));
+            menu.append(buttonli("qx ui row-order-dragmenu insert-above", "Insert row above"));
+            menu.append(buttonli("qx ui row-order-dragmenu insert-below", "Insert row below"));
         }
     }
-    menu.append(buttonli("link ui row-order-dragmenu remove", {disabled: !row_order_allow_remove(group)}, "Remove"));
+    menu.append(buttonli("qx ui row-order-dragmenu remove", "Remove", {disabled: !row_order_allow_remove(group)}));
 });
 
-handle_ui.on("row-order-dragmenu", function () {
+handle_ui.on("row-order-dragmenu", function (evt) {
+    if (this.ariaDisabled === "true") {
+        evt.preventDefault();
+        return;
+    }
     hotcrp.dropmenu.close(this);
     const row = this.closest(".draggable"), group = row.parentElement,
         defaults = row_order_defaults(group);
@@ -5874,7 +6118,8 @@ $(function () {
 
 
 function minifeedback(e, rv) {
-    var ul = document.createElement("ul"), status = 0;
+    const ul = document.createElement("ul");
+    let status = 0;
     ul.className = "feedback-list";
     if (rv && rv.message_list) {
         for (let mx of rv.message_list) {
@@ -5895,43 +6140,59 @@ function minifeedback(e, rv) {
     }
     removeClass(e, "has-error");
     removeClass(e, "has-warning");
-    if (status > 0)
+    if (status > 0) {
         addClass(e, status > 1 ? "has-error" : "has-warning");
-    if (ul.firstChild)
-        make_bubble(ul, status > 1 ? "errorbubble" : "warningbubble").near(e).removeOn(e, "input change click hide" + (status > 1 ? "" : " focus blur"));
-
-    var ce, checkish = e.tagName === "BUTTON" || e.tagName === "SELECT" || e.type === "checkbox" || e.type === "radio";
-    if (checkish || hasClass(e, "mf-label")
-        || (status === 0 && hasClass(e, "mf-label-success"))) {
-        ce = e.closest("label");
-        if (!ce && e.id)
-            ce = document.querySelector("label[for='" + e.id + "']");
     }
-    if (!ce && hasClass(e, "mf"))
-        ce = e;
-    else if (!ce) {
-        ce = e.parentElement;
-        if (!hasClass(ce, "mf")) {
-            ce = document.createElement("div");
-            ce.className = checkish ? "mf mf-absolute" : "mf mf-text";
-            e.parentElement.replaceChild(ce, e);
-            ce.appendChild(e);
+    if (ul.firstChild) {
+        make_bubble({content: ul, class: status > 1 ? "errorbubble" : "warningbubble"}).near(e).removeOn(e, "input change click hide" + (status > 1 ? "" : " focus blur"));
+    }
+
+    let ctr, prev = null;
+    if (hasClass(e, "mf-label")
+        || (status === 0 && hasClass(e, "mf-label-success"))
+        || ["checkbox", "radio", "select-one", "select-multiple", "button"].includes(e.type)) {
+        ctr = e.closest("label");
+        if (!ctr && e.id) {
+            ctr = document.querySelector(`label[for='${e.id}']`);
+        }
+    }
+    if (!ctr
+        && !(ctr = e.closest(".mf"))) {
+        prev = e;
+        ctr = e.parentElement;
+        if (hasClass(ctr, "select") || hasClass(ctr, "btnbox")) {
+            prev = ctr;
+            ctr = ctr.parentElement;
         }
     }
 
-    $(ce).find(".is-mf").remove();
-    var mfe = document.createElement("span");
-    mfe.className = "is-mf mf-" + ["success", "warning", "error"][status];
-    ce.appendChild(mfe);
+    while (prev
+           && prev.nextElementSibling
+           && hasClass(prev.nextElementSibling, "is-mf")) {
+        prev.nextElementSibling.remove();
+    }
+    while (!prev
+           && ctr.lastElementChild
+           && hasClass(ctr.lastElementChild, "is-mf")) {
+        ctr.lastElementChild.remove();
+    }
+
+    let mfclass = "is-mf mf-" + ["success", "warning", "error"][status];
+    if (prev && prev instanceof HTMLInputElement && prev.type === "text") {
+        mfclass += " mf-near-text";
+    }
+    const xe = $e("span", mfclass);
+    ctr.insertBefore(xe, prev ? prev.nextElementSibling : null);
     if (status === 0) {
-        var to, fn = function () {
+        let to, fn = function () {
             e.removeEventListener("input", fn);
             clearTimeout(to);
-            if (mfe.parentElement === ce)
-                ce.removeChild(mfe);
+            if (xe.parentElement === ctr) {
+                ctr.removeChild(xe);
+            }
         };
         e.addEventListener("input", fn);
-        to = setTimeout(fn, parseFloat(getComputedStyle(mfe, ":after").animationDuration + 1) * 1000);
+        to = setTimeout(fn, parseFloat(getComputedStyle(xe, ":after").animationDuration + 1) * 1000);
     }
 }
 
@@ -6052,31 +6313,30 @@ handle_ui.on("js-leftmenu", function (evt) {
     }
     var liststyle = window.getComputedStyle(list);
     if (liststyle.display === "none") {
-        addClass(nav, "leftmenu-open");
-        evt.preventDefault();
+        addClass(nav, "expanded");
+        removeClass(nav, "collapsed");
     } else if (liststyle.display === "block") {
-        removeClass(nav, "leftmenu-open");
-        evt.preventDefault();
-    } else if (this.href === "") {
-        evt.preventDefault();
+        removeClass(nav, "expanded");
+        addClass(nav, "collapsed");
+    } else if (this.href !== "") {
+        return;
     }
+    evt.preventDefault();
 });
 
 
 // abstract
 $(function () {
+    const ab = document.getElementById("s-abstract-body"),
+        abc = ab ? ab.closest(".paperinfo-i-expand") : null;
     function check_abstract_height() {
-        var want_hidden = $("#foldpaper").hasClass("fold6c");
-        if (want_hidden) {
-            var $ab = $(".abstract");
-            if ($ab.length && $ab.height() > $ab.closest(".paperinfo-abstract").height() - $ab.position().top)
-                want_hidden = false;
+        if (hasClass(abc, "collapsed")) {
+            toggleClass(abc, "force-expanded", $(ab).height() <= $(abc.firstChild).height() - $(ab).position().top);
         }
-        $("#foldpaper").toggleClass("fold7c", want_hidden);
     }
-    if ($(".paperinfo-abstract").length) {
+    if (abc && abc.hasAttribute("data-fold-storage")) {
         check_abstract_height();
-        $("#foldpaper").on("foldtoggle renderText", check_abstract_height);
+        $(abc).on("foldtoggle renderText", check_abstract_height);
         $(window).on("resize", check_abstract_height);
     }
 });
@@ -6208,87 +6468,63 @@ hotcrp.tooltip.add_builder("rf-score", function (info) {
     return info;
 });
 
-hotcrp.tooltip.add_builder("rf-description", function (info) {
-    var rv = $(this).closest(".rf");
-    if (rv.length) {
-        var fieldj = formj[rv.data("rf")];
-        if (fieldj && (fieldj.description || fieldj.values)) {
-            var d = "";
-            if (fieldj.description) {
-                if (/<(?:p|div|table)/i.test(fieldj.description))
-                    d += fieldj.description;
-                else
-                    d += "<p>" + fieldj.description + "</p>";
-            }
-            if (fieldj.values) {
-                d += "<div class=\"od\">Choices are:</div>";
-                fieldj.each_value(function (fv) {
-                    d = d.concat('<div class="od"><strong class="sv ', fv.className, '">', fv.symbol, fv.sp1, '</strong>', fv.sp2, escape_html(fv.title), '</div>');
-                });
-            }
-            info = $.extend({content: d, anchor: "w"}, info);
-        }
-    }
-    return info;
-});
-
-function score_header_tooltips($j) {
-    $j.find(".rf .revfn").attr("data-tooltip-info", "rf-description")
-        .each(hotcrp.tooltip);
-}
-
 function field_visible(f, rrow) {
     return rrow[f.uid] != null && rrow[f.uid] !== "";
 }
 
 function render_review_body_in(rrow, bodye) {
-    var foidx = 0, f, x, nextf, last_display = 0, display, fe, h3, e;
+    let foidx = 0, nextf, last_display = 0;
     for (foidx = 0; (nextf = form_order[foidx]) && !field_visible(nextf, rrow); ++foidx) {
     }
     while (nextf) {
-        f = nextf;
+        const f = nextf;
         for (++foidx; (nextf = form_order[foidx]) && !field_visible(nextf, rrow); ++foidx) {
         }
 
-        if (last_display != 1 && f.type !== "text" && nextf && nextf.type !== "text") {
-            display = 1;
-        } else {
-            display = last_display == 1 ? 2 : 0;
+        let display = 1;
+        if (last_display === 1 || f.type === "text" || !nextf || nextf.type === "text") {
+            display = last_display === 1 ? 2 : 0;
         }
 
-        fe = document.createElement("div");
+        const fe = document.createElement("div");
         fe.className = "rf rfd" + display;
         fe.setAttribute("data-rf", f.uid);
         bodye.appendChild(fe);
 
-        e = document.createElement("span");
-        e.className = "revfn";
-        e.append(f.name);
-        h3 = document.createElement("h3");
-        h3.className = "rfehead";
-        h3.appendChild(e);
-        x = f.visibility || "re";
-        if (x === "audec" && hotcrp.status && hotcrp.status.myperm
-            && hotcrp.status.myperm.some_author_can_view_decision) {
-            x = "au";
+        const fte = document.createElement("span");
+        fte.className = "field-title";
+        fte.append(f.name);
+        const ttid = f.tooltip_id();
+        if (ttid) {
+            addClass(fte, "need-tooltip");
+            fte.setAttribute("data-tooltip-anchor", "w");
+            fte.setAttribute("aria-describedby", ttid);
         }
-        if (x !== "au") {
-            e = document.createElement("div");
-            e.className = "field-visibility";
-            x = ({
+        const h3 = document.createElement("h3");
+        h3.className = "rfehead";
+        h3.appendChild(fte);
+        let vis = f.visibility || "re";
+        if (vis === "audec" && hotcrp.status && hotcrp.status.myperm
+            && hotcrp.status.myperm.some_author_can_view_decision) {
+            vis = "au";
+        }
+        if (vis !== "au") {
+            const vise = document.createElement("div");
+            vise.className = "field-visibility";
+            const vistext = ({
                 secret: "secret",
                 admin: "shown only to administrators",
                 re: "hidden from authors",
                 audec: "hidden from authors until decision",
                 pconly: "hidden from authors and external reviewers"
-            })[x] || x;
-            e.append("(" + x + ")");
-            h3.appendChild(e);
+            })[vis] || vis;
+            vise.append("(" + vistext + ")");
+            h3.appendChild(vise);
         }
-        e = document.createElement("div");
-        e.className = "revvt";
-        e.appendChild(h3);
-        fe.appendChild(e);
+        const vte = document.createElement("div");
+        vte.className = "revvt";
+        vte.appendChild(h3);
+        fe.appendChild(vte);
 
         f.render_in(rrow[f.uid], rrow, fe);
 
@@ -6521,13 +6757,17 @@ function render_ratings(ratings, user_rating, editable) {
     } else {
         ex = $e("div", "revrating", ...es);
     }
-    return $e("div", "revcard-rating fx20", ex);
+    return $e("div", "revcard-rating", ex);
 }
 
-function make_review_h2(rrow, rlink, rdesc) {
+function make_review_h2(rrow, rlink, rdesc, rid) {
     let h2 = $e("h2"), ma, rd = $e("span");
     if (rrow.collapsed) {
-        ma = $e("button", {type: "button", class: "qo ui js-foldup", "data-fold-target": 20}, make_expander_element(20));
+        ma = $e("button", {
+            type: "button", class: "qo ui js-foldup expander",
+            "aria-controls": `r${rid}-body`, "aria-expanded": "false"
+        });
+        ma.append(make_expander_element());
     } else {
         ma = $e("a", {href: hoturl("review", rlink), class: "qo"});
     }
@@ -6604,61 +6844,69 @@ hotcrp.add_review = function (rrow) {
 
     const earticle = document.createElement("article");
     earticle.id = "r" + rid;
-    earticle.className = "pcard revcard " + (rrow.subreview || rrow.draft ? "" : "revsubmitted ") + "need-anchor-unfold has-fold fold20" + (rrow.collapsed ? "c" : "o");
+    earticle.className = "pcard revcard " + (rrow.subreview || rrow.draft ? "" : "revsubmitted ") + "need-anchor-unfold";
     earticle.setAttribute("data-pid", rrow.pid);
     earticle.setAttribute("data-rid", rrow.rid);
-    rrow.ordinal && earticle.setAttribute("data-review-ordinal", rrow.ordinal);
-    $(".pcontainer")[0].appendChild(earticle);
+    if (rrow.ordinal) {
+        earticle.setAttribute("data-review-ordinal", rrow.ordinal);
+    }
 
     // header
-    const eheader = $e("header", "revcard-head", make_review_h2(rrow, rlink, rdesc));
+    const eheader = $e("header", "revcard-head",
+        make_review_h2(rrow, rlink, rdesc, rid));
     append_review_id(rrow, eheader);
     eheader.appendChild($e("hr", "c"));
-    earticle.appendChild(eheader);
 
-    // messages
+    // body
+    const ebody = document.createElement("div");
+    ebody.id = `r${rid}-body`;
+    if (rrow.collapsed) {
+        ebody.hidden = true;
+    }
+
     if (rrow.message_list) {
-        earticle.appendChild($e("div", "revcard-feedback fx20", feedback.render_list(rrow.message_list)));
+        ebody.appendChild($e("div", "revcard-feedback", feedback.render_list(rrow.message_list)));
     }
 
     // body
-    let e = $e("div", "revcard-render fx20");
-    earticle.appendChild(e);
+    let e = $e("div", "revcard-render");
+    ebody.appendChild(e);
     render_review_body_in(rrow, e);
 
     // hidden fields, if any
     if (rrow.hidden_fields && rrow.hidden_fields.length > 0) {
-        earticle.appendChild(render_review_hidden_fields(rrow.hidden_fields));
+        ebody.appendChild(render_review_hidden_fields(rrow.hidden_fields));
     }
 
     // ratings
     if ((e = render_ratings(rrow.ratings, rrow.user_rating, "user_rating" in rrow))) {
-        earticle.appendChild(e);
+        ebody.appendChild(e);
     }
 
     // complete render
-    score_header_tooltips($(earticle));
+    earticle.append(eheader, ebody);
+    document.querySelector(".pcontainer").append(earticle);
+    $(earticle).awaken();
     navsidebar.set("r" + rid, rdesc);
 };
 
 function render_review_hidden_fields(hidden_fields) {
-    var i, n = [], link;
-    for (i = 0; i !== hidden_fields.length; ++i) {
-        var f = formj[hidden_fields[i]];
+    let n = [];
+    for (let i = 0; i !== hidden_fields.length; ++i) {
+        let f = formj[hidden_fields[i]];
         n.push(f.name);
     }
-    link = $e("a");
+    const link = $e("a");
     link.href = hoturl("settings", {group: "reviewform", "#": "rf/" + formj[hidden_fields[0]].order});
     if (!hotcrp.status.is_admin) {
         link.className = "q";
     }
     if (n.length === 1) {
         link.textContent = "field condition";
-        return $e("p", "feedback is-warning mt-3", "This review’s ".concat(n[0], " field has been hidden by a "), link, ".");
-    } else {
-        link.textContent = "field conditions";
-        return $e("p", "feedback is-warning mt-3", "This review’s ".concat(commajoin(n), " fields have been hidden by "), link, ".");
+        return $e("p", "feedback is-warning mt-3", `This review’s ${n[0]} field has been hidden by a `, link, ".");
     }
+    link.textContent = "field conditions";
+    return $e("p", "feedback is-warning mt-3", `This review’s ${commajoin(n)} fields have been hidden by `, link, ".");
 }
 
 
@@ -6686,6 +6934,33 @@ ReviewField.prototype.render_in = function (fv, rrow, fe) {
     fe.appendChild(e);
     render_text.onto(e, rrow.format, fv);
 }
+
+ReviewField.prototype.tooltip_id = function () {
+    if (!this.description && !this.values) {
+        return null;
+    } else if (this._tooltip_id) {
+        return this._tooltip_id;
+    }
+    const bubdiv = make_bubble.skeleton();
+    bubdiv.id = this._tooltip_id = `d-rf-${this.uid}`;
+    let d = "";
+    if (this.description) {
+        if (/<(?:p|div|table)/i.test(this.description)) {
+            d += this.description;
+        } else {
+            d += `<p>${this.description}</p>`;
+        }
+    }
+    if (this.values) {
+        d += "<div class=\"od\">Choices are:</div>";
+        this.each_value(function (fv) {
+            d += `<div class="od"><strong class="sv ${fv.className}">${fv.symbol}${fv.sp1}</strong>${fv.sp2}${escape_html(fv.title)}</div>`;
+        });
+    }
+    bubdiv.firstChild.innerHTML = d;
+    document.body.appendChild(bubdiv);
+    return this._tooltip_id;
+};
 
 function DiscreteValues_ReviewField(fj) {
     var i, n, step, sym, ch;
@@ -7132,15 +7407,15 @@ function cmt_render_form_prop(cj, cid, btnbox) {
     const einfo = $e("div", "cmteditinfo fold3c fold4c");
 
     // attachments
-    einfo.append($e("div", {id: cid + "-attachments", class: "entryi has-editable-attachments hidden", "data-dtype": -2, "data-document-prefix": "attachment"}, $e("span", "label", "Attachments")));
-    btnbox.append($e("button", {type: "button", name: "attach", class: "btn-licon need-tooltip ui js-add-attachment", "aria-label": "Attach file", "data-editable-attachments": cid + "-attachments"}, svge_use_licon("attachment")));
+    einfo.append($e("div", {id: cid + "-attachments", class: "entryi has-editable-attachments hidden", "data-dt": -2, "data-document-prefix": "attachment"}, $e("span", "label", "Attachments")));
+    btnbox.append($e("button", {type: "button", name: "attach", class: "btn-licon need-tooltip ui js-add-attachment", "aria-label": "Attach file", "data-editable-attachments": cid + "-attachments"}, $svg_use_licon("attachment")));
 
     // tags
     if (!cj.response && !cj.by_author) {
         einfo.append($e("div", "entryi fx3",
             $e("label", {for: cid + "-tags"}, "Tags"),
             $e("input", {id: cid + "-tags", name: "tags", type: "text", size: 50, placeholder: "Comment tags"})));
-        btnbox.append($e("button", {type: "button", name: "showtags", class: "btn-licon need-tooltip", "aria-label": "Tags"}, svge_use_licon("tag")));
+        btnbox.append($e("button", {type: "button", name: "showtags", class: "btn-licon need-tooltip", "aria-label": "Tags"}, $svg_use_licon("tag")));
     }
 
     // visibility
@@ -7187,7 +7462,7 @@ function cmt_render_form_prop(cj, cid, btnbox) {
             $e("div", "entry",
                 $e("span", "select", etsel),
                 $e("p", "f-d text-break-line"))));
-        btnbox.append($e("button", {type: "button", name: "showthread", class: "btn-licon need-tooltip", "aria-label": "Thread", "data-editable-attachments": cid + "-attachments"}, svge_use_licon("thread")));
+        btnbox.append($e("button", {type: "button", name: "showthread", class: "btn-licon need-tooltip", "aria-label": "Thread", "data-editable-attachments": cid + "-attachments"}, $svg_use_licon("thread")));
     }
 
     // delete
@@ -7199,7 +7474,7 @@ function cmt_render_form_prop(cj, cid, btnbox) {
         } else {
             bnote = "Are you sure you want to override the deadline and delete this " + x + "?";
         }
-        btnbox.append($e("button", {type: "button", name: "delete", class: "btn-licon need-tooltip", "aria-label": "Delete " + x, "data-override-text": bnote}, svge_use_licon("trash")));
+        btnbox.append($e("button", {type: "button", name: "delete", class: "btn-licon need-tooltip", "aria-label": "Delete " + x, "data-override-text": bnote}, $svg_use_licon("trash")));
     }
 
     // response ready
@@ -7410,7 +7685,7 @@ function cmt_start_edit(celt, cj) {
 }
 
 function cmt_render_attachment_input(ctr, doc) {
-    return $e("div", {class: "has-document", "data-dtype": "-2", "data-document-name": "attachment:" + ctr},
+    return $e("div", {class: "has-document", "data-dt": "-2", "data-document-name": "attachment:" + ctr},
         $e("div", "document-file", cmt_render_attachment(doc)),
         $e("div", "document-actions",
             $e("button", {type: "button", class: "link ui js-remove-document"}, "Delete"),
@@ -8109,12 +8384,13 @@ hotcrp.shortcut = function (top_elt) {
         var e = evt.target;
         if (e && e !== top_elt) {
             // reject targets that want the keypress
-            var tag = e.tagName, type = e.type;
+            const tag = e.tagName, type = e.type;
             if (tag === "TEXTAREA"
                 || tag === "SELECT"
                 || (tag === "INPUT"
                     && type !== "button"
                     && type !== "checkbox"
+                    && type !== "image"
                     && type !== "radio"
                     && type !== "reset"
                     && type !== "submit"))
@@ -8343,7 +8619,7 @@ demand_load.emoji_codes = demand_load.make(function (resolve) {
 });
 
 (function () {
-var people_regex = /(?:[\u261d\u26f9\u270a-\u270d]|\ud83c[\udf85\udfc2-\udfc4\udfc7\udfca-\udfcc]|\ud83d[\udc42-\udc43\udc46-\udc50\udc66-\udc78\udc7c\udc81-\udc83\udc85-\udc87\udc8f\udc91\udcaa\udd74-\udd75\udd7a\udd90\udd95-\udd96\ude45-\ude47\ude4b-\ude4f\udea3\udeb4-\udeb6\udec0\udecc]|\ud83e[\udd0c\udd0f\udd18-\udd1f\udd26\udd30-\udd39\udd3c-\udd3e\udd77\uddb5-\uddb6\uddb8-\uddb9\uddbb\uddcd-\uddcf\uddd1-\udddd\udec3-\udec5\udef0-\udef6])/;
+const people_regex = /(?:[\u261d\u26f9\u270a-\u270d]|\ud83c[\udf85\udfc2-\udfc4\udfc7\udfca-\udfcc]|\ud83d[\udc42-\udc43\udc46-\udc50\udc66-\udc78\udc7c\udc81-\udc83\udc85-\udc87\udc8f\udc91\udcaa\udd74-\udd75\udd7a\udd90\udd95-\udd96\ude45-\ude47\ude4b-\ude4f\udea3\udeb4-\udeb6\udec0\udecc]|\ud83e[\udd0c\udd0f\udd18-\udd1f\udd26\udd30-\udd39\udd3c-\udd3e\udd77\uddb5-\uddb6\uddb8-\uddb9\uddbb\uddcd-\uddcf\uddd1-\udddd\udec3-\udec5\udef0-\udef6])/;
 
 function combine(sel, list, i, j) {
     while (i < j) {
@@ -8365,30 +8641,30 @@ function select_from(sel, s, list) {
     }
 }
 
-function complete_list(v, sel, modifiers) {
-    var res = [], i, j, code, compl, mod;
-    for (i = 0; i !== sel.length; ++i) {
-        code = sel[i];
-        compl = v.completion[code];
+function complete_list(v, sel, options) {
+    let res = [];
+    for (const code of sel) {
+        const scode = `:${code}:`;
+        let compl = v.completion[code];
         if (!compl) {
             compl = v.completion[code] = {
-                s: ":".concat(code, ":"),
-                r: v.emoji[code],
-                no_space: true,
-                sh: '<span class="nw">'.concat(v.emoji[code], " :", code, ":</span>")
+                s: scode,
+                r: options.code ? scode : v.emoji[code],
+                no_space: !options.code,
+                sh: `<span class="nw">${v.emoji[code]} ${scode}</span>`
             };
         }
         res.push(compl);
-        if (modifiers && people_regex.test(compl.r)) {
-            for (j = 0; j !== v.modifier_words.length; ++j) {
-                mod = v.modifier_words[j];
+        if (options.modifiers && people_regex.test(compl.r)) {
+            for (const mod of v.modifier_words) {
+                const mscode = `:${code}-${mod}:`;
                 res.push({
-                    s: ":".concat(code, "-", mod, ":"),
-                    r: compl.r + v.emoji[mod],
-                    no_space: true,
-                    sh: '<span class="nw">'.concat(compl.r, v.emoji[mod], " :", code, "-", mod, ":</span>"),
+                    s: mscode,
+                    r: options.code ? mscode : compl.r + v.emoji[mod],
+                    no_space: !options.code,
+                    sh: `<span class="nw">${compl.r}${v.emoji[mod]} ${mscode}</span>`,
                     hl_length: 2 + code.length + mod.length,
-                    shorter_hl: ":".concat(code, ":")
+                    shorter_hl: scode
                 });
             }
         }
@@ -8396,41 +8672,52 @@ function complete_list(v, sel, modifiers) {
     return res;
 }
 
-demand_load.emoji_completion = function (start) {
+function decolon(s) {
+    const a = s.startsWith(":") ? 1 : 0,
+        b = s.endsWith(":") && s.length > 1 ? 1 : 0;
+    return a + b === 0 ? s : s.substring(a, s.length - b);
+}
+
+demand_load.emoji_completion = function (start, options) {
+    start = decolon(start);
+    options = Object.assign({}, options || {});
     return demand_load.emoji_codes().then(function (v) {
-        var sel, i, ch, basic = v.lists.basic, m;
-        start = start.replace(/:$/, "");
+        let m, ch;
         if ((m = /^(-?[^-]+)-/.exec(start))
             && (ch = v.emoji[m[1]])
             && people_regex.test(ch)) {
-            return complete_list(v, [m[1]], true);
+            options.modifiers = true;
+            return complete_list(v, [m[1]], options);
         }
+        let sel;
         if (start === "") {
-            sel = basic.slice();
+            sel = v.lists.basic.slice();
         } else {
             sel = [];
-            for (i = 0; i !== basic.length; ++i) {
-                if (basic[i].startsWith(start))
-                    sel.push(basic[i]);
+            for (const b of v.lists.basic) {
+                if (b.startsWith(start))
+                    sel.push(b);
             }
             sel = select_from(sel, start, v.lists.common);
             if (start.length > 1) {
                 sel = select_from(sel, start, v.lists.all);
-                var xsel = select_from([], start, v.words), ysel = [];
-                for (i = 0; i !== xsel.length; ++i)
-                    Array.prototype.push.apply(ysel, v.wordsets[xsel[i]]);
+                const ysel = [];
+                for (const wordset of select_from([], start, v.words)) {
+                    Array.prototype.push.apply(ysel, v.wordsets[wordset]);
+                }
                 ysel.sort();
                 combine(sel, ysel, 0, ysel.length);
             }
         }
-        return complete_list(v, sel, false);
+        options.modifiers = false;
+        return complete_list(v, sel, options);
     });
 };
 })();
 
 
 hotcrp.tooltip.add_builder("votereport", function (info) {
-    var pid = $(this).attr("data-pid") || siteinfo.paperid,
+    const pid = $(this).attr("data-pid") || siteinfo.paperid,
         tag = $(this).attr("data-tag");
     if (pid && tag)
         info.content = demand_load.make(function (resolve) {
@@ -8444,67 +8731,107 @@ hotcrp.tooltip.add_builder("votereport", function (info) {
 // suggestions and completion
 
 function completion_item(c) {
-    if (typeof c === "string")
+    if (typeof c === "string") {
         return {s: c};
-    else if ($.isArray(c))
+    } else if ($.isArray(c)) {
         return {s: c[0], d: c[1]};
-    else {
-        if (!("s" in c) && "sm1" in c) {
-            c = $.extend({s: c.sm1, ml: 1}, c);
-            delete c.sm1;
-        }
-        return c;
     }
+    if (!("s" in c) && "sm1" in c) {
+        c = $.extend({s: c.sm1, ml: 1}, c);
+        delete c.sm1;
+    }
+    return c;
 }
 
-function completion_split(elt) {
-    if (elt.selectionStart === elt.selectionEnd)
-        return [elt.value.substring(0, elt.selectionStart),
-                elt.value.substring(elt.selectionEnd)];
-    else
+function CompletionSpan(value, indexPos) {
+    this.value = value;         // Text including completion
+    this.indexPos = indexPos;   // Caret position (-1 if no match)
+    this.startPos = indexPos;   // Left position of completion span
+    this.endPos = indexPos;     // Right position of completion span
+    this.prefix = null;         // String prepended to each item (optional)
+    this.skipRe = null;         // Sticky regex matching data to skip on
+                                // successful completion (optional)
+    this.minLength = 0;         // Ignore completion items that don’t match
+                                // the first `minLength` characters of span
+    this.caseSensitive = null;  // If falsy (default), matches are case
+                                // insensitive. If truthy, then matches are
+                                // case sensitive; if "lower", then in addition
+                                // all items are assumed lowercased already
+    this.maxItems = null;       // Maximum number of completion items to show
+    this.postReplace = null;    // Function called after completion
+    this.smartPunctuation = false; // After completion, skip punctuation, and
+                                // if punctuation is typed, auto-remove
+                                // introduced space
+    this.limitReplacement = false; // After completion, replace only the edit
+                                // region and any subsequent characters that
+                                // match the chosen replacement
+}
+
+CompletionSpan.at = function (elt) {
+    const startPos = elt.selectionStart;
+    if (startPos !== elt.selectionEnd) {
+        return new CompletionSpan("", -1);
+    }
+    return new CompletionSpan(elt.value, startPos);
+};
+
+CompletionSpan.prototype.matchLeft = function (re) {
+    if (this.indexPos < 0) {
+        return false;
+    }
+    const m = re.exec(this.value.substring(Math.max(0, this.indexPos - 2000), this.indexPos));
+    if (!m) {
+        return false;
+    }
+    this.startPos = this.indexPos - (m[1] != null ? m[1].length : 0);
+    return true;
+};
+
+CompletionSpan.prototype.matchPrefixLeft = function (re) {
+    if (this.indexPos < 0) {
+        return false;
+    }
+    const m = re.exec(this.value.substring(Math.max(0, this.indexPos - 2000), this.indexPos));
+    if (!m) {
+        return false;
+    }
+    this.prefix = m[1];
+    this.startPos = this.indexPos - m[2].length;
+    return true;
+};
+
+CompletionSpan.prototype.matchRight = function (re) {
+    if (this.indexPos < 0) {
+        return false;
+    }
+    if (!re.sticky) {
+        throw new Error("!");
+    }
+    re.lastIndex = this.indexPos;
+    const m = re.exec(this.value);
+    if (!m) {
+        return false;
+    }
+    this.endPos = this.indexPos + (m[1] != null ? m[1].length : 0);
+    return true;
+};
+
+CompletionSpan.prototype.span = function () {
+    if (this.indexPos < 0) {
         return null;
-}
-
-function completion_search_prefix(cinfo, str) {
-    var i, s, case_sensitive = cinfo.case_sensitive, items = cinfo.items;
-    if (!case_sensitive || case_sensitive === "lower") {
-        str = str.toLowerCase();
     }
-    for (i = 0; i !== items.length; ++i) {
-        s = items[i].s;
-        if (!case_sensitive) {
-            s = s.toLowerCase();
-        }
-        if (s.startsWith(str)) {
-            return items[i];
-        }
-    }
-    return null;
-}
+    return this.value.substring(this.startPos, this.endPos);
+};
 
-function make_suggestions(precaret, postcaret, options) {
-    // The region around the caret is divided into three parts:
-    //     ... precaret ^ postcaret options.suffix ...
-    // * `precaret`, `postcaret`: Only highlight completion items that start
-    //   with `precaret + postcaret`. `precaret + postcaret` is collectively
-    //   called the match region.
-    // * `options.suffix`: After successful completion, caret skips over this.
-    //
-    // Other options:
-    // * `options.case_sensitive`: If falsy (default), then matches are case
-    //   insensitive. If truthy, then matches are case sensitive (match region
-    //   "A" will not match completion item "a"). If `"lower"`, then matches
-    //   are case insensitive, but all completion items are assumed to be
-    //   lower-case.
-    // * `options.ml`: Integer. Ignore completion items that don’t
-    //    match the first `ml` characters of the match region.
-    // * `options.prefix`: Show this before each item.
-    // * `options.max_items`: Maximum number of completion items to show.
-    // * `options.limit_replacement`: When completion succeeds, limit the
-    //   characters replaced in the input to the edit region and any following
-    //   characters that match.
-    //
-    // Completion items:
+CompletionSpan.prototype.spanMatches = function (elt) {
+    return elt.selectionStart === this.indexPos
+        && elt.selectionEnd === this.indexPos
+        && elt.value.length >= this.endPos
+        && elt.value.substring(this.startPos, this.endPos) === this.span();
+};
+
+CompletionSpan.prototype.filter = function (tlist) {
+    // `tlist` is a list of completion items:
     // * `item.s`: Completion string -- mandatory.
     // * `item.sh`: Completion item HTML (requires `item.r`).
     // * `item.d`: Description text.
@@ -8516,84 +8843,115 @@ function make_suggestions(precaret, postcaret, options) {
     // * A string `item` sets `item.s`.
     // * A two-element array `item` sets `item.s` and `item.d`, respectively.
     // * A `item.sm1` component sets `item.s = item.sm1` and `item.ml = 1`.
-    //
-    // Return value:
-    // * Extends `options`.
-    // * `items`: List of matching items.
-    // * `best`: Index of best item in `items`.
-    // * `lengths`: [precaret.length, postcaret.length, options.suffix.length].
-    // Set externally:
-    // * `startpos`: Precaret position.
-    // * `editlength`: Minimum postcaret length over this completion session.
 
-    options = options || {};
+    // Returns `null` or an object `{items, best, cspan}`, where `items` is
+    // the sublist of `tlist` that should be displayed, `best` is the index
+    // of the best item in `items`, and `cspan` is `this`. Also, set externally
+    // is `editlength`, the minimum postcaret length over this completion session
 
-    var case_sensitive = options.case_sensitive,
-        lregion = precaret + postcaret;
-    if (!case_sensitive || case_sensitive === "lower")
-        lregion = lregion.toLowerCase();
-    if (options.region_trimmer)
-        lregion = lregion.replace(options.region_trimmer, "");
-    if (options.ml > lregion.length) {
-        return function (/*tlist*/) {
-            return null;
-        };
+    if (this.indexPos < 0 || this.endPos - this.startPos < this.minLength) {
+        return null;
     }
-    var filter = options.ml ? lregion.substr(0, options.ml) : null,
-        lengths = [precaret.length, postcaret.length, (options.suffix || "").length];
 
-    return function (tlist) {
-        var res = [], best = null, i,
-            can_highlight = lregion.length >= (filter || "x").length,
-            titem, text, ltext, rl, last_text;
+    const caseSensitive = this.caseSensitive;
+    let lregion = this.span();
+    if (!caseSensitive || caseSensitive === "lower") {
+        lregion = lregion.toLowerCase();
+    }
 
-        for (i = 0; i < tlist.length; ++i) {
-            titem = completion_item(tlist[i]);
-            text = titem.s;
-            ltext = case_sensitive ? text : text.toLowerCase();
+    // if there are relatively few items, and they all have .ml > 1,
+    // then show them even when completing on the empty string
+    let rlbound = 0;
+    if (lregion === ""
+        && tlist.length <= 10
+        && !tlist.find(x => (x.ml || 0) <= 0)) {
+        rlbound = tlist.reduce((m, x) => Math.min(m, x.ml), 100);
+    }
+
+    const filter = this.minLength ? lregion.substring(0, this.minLength) : null,
+        can_highlight = lregion.length >= (filter || "x").length,
+        res = [];
+    let best = null, last_text = null;
+    for (let titem of tlist) {
+        titem = completion_item(titem);
+        const text = titem.s,
+            ltext = caseSensitive ? text : text.toLowerCase(),
             rl = titem.ml || 0;
 
-            if ((filter === null || ltext.startsWith(filter))
-                && (rl === 0
-                    || (lregion.length >= rl
-                        && lregion.startsWith(ltext.substr(0, rl))))
-                && (last_text === null || last_text !== text)) {
-                if (can_highlight
-                    && ltext.startsWith(lregion)
-                    && (best === null
-                        || (titem.pri || 0) > (res[best].pri || 0)
-                        || ltext.length === lregion.length)) {
-                    best = res.length;
-                    if (titem.hl_length
-                        && lregion.length < titem.hl_length
-                        && titem.shorter_hl) {
-                        best = 0;
-                        while (best < res.length && res[best].s !== titem.shorter_hl)
-                            ++best;
+        if ((filter === null || ltext.startsWith(filter))
+            && (rl <= rlbound
+                || (lregion.length >= rl
+                    && lregion.startsWith(ltext.substr(0, rl))))
+            && (last_text === null || last_text !== text)) {
+            if (can_highlight
+                && ltext.startsWith(lregion)
+                && (best === null
+                    || (titem.pri || 0) > (res[best].pri || 0)
+                    || ltext.length === lregion.length)) {
+                best = res.length;
+                if (titem.hl_length
+                    && lregion.length < titem.hl_length
+                    && titem.shorter_hl) {
+                    best = 0;
+                    while (best < res.length && res[best].s !== titem.shorter_hl) {
+                        ++best;
                     }
                 }
-                res.push(titem);
-                last_text = text;
-                if (res.length === options.max_items)
-                    break;
+            }
+            res.push(titem);
+            last_text = text;
+            if (res.length === this.maxItems) {
+                break;
             }
         }
+    }
+    if (res.length === 0) {
+        return null;
+    }
+    return {items: res, best: best, cspan: this};
+};
 
-        return res.length ? $.extend({items: res, lengths: lengths, best: best}, options) : null;
-    };
-}
+CompletionSpan.prototype.filterFrom = function (promise) {
+    if (this.indexPos < 0) {
+        return null;
+    }
+    const self = this;
+    return promise.then(function (tlist) { return self.filter(tlist); });
+};
+
+CompletionSpan.prototype.searchLeft = function (tlist) {
+    if (this.indexPos < 0) {
+        return null;
+    }
+    const caseSensitive = this.caseSensitive;
+    let lregion = this.value.substring(this.startPos, this.indexPos);
+    if (!caseSensitive || caseSensitive === "lower") {
+        lregion = lregion.toLowerCase();
+    }
+    for (let titem of tlist) {
+        titem = completion_item(titem);
+        const text = titem.s,
+            ltext = caseSensitive ? text : text.toLowerCase();
+        if (ltext.startsWith(lregion)) {
+            return titem;
+        }
+    }
+    return null;
+};
 
 hotcrp.suggest = (function () {
-var builders = {}, punctre;
+const builders = {};
+let punctre;
 try {
-    punctre = new RegExp("^(?!@)[\\p{Po}\\p{Pd}\\p{Pe}\\p{Pf}]$", "u");
+    punctre = new RegExp("(?!@)[\\p{Po}\\p{Pd}\\p{Pe}\\p{Pf}]+", "uy");
 } catch (err) {
-    punctre = /^[-‐‑‒–—!"#%&'*,./:;?\\¡§¶·¿¡)\]}»›’”]$/;
+    punctre = /[-‐‑‒–—!"#%&'*,./:;?\\§¶·¿¡)\]}»›’”]+/y;
 }
 
 function suggest() {
-    var elt = this, suggdata,
-        hintdiv, hintinfo, blurring = false, hiding = false, will_display = false,
+    const elt = this;
+    let suggdata, hintdiv, hintinfo,
+        blurring = false, hiding = false, will_display = false,
         wasnav = 0, spacestate = -1, wasmouse = null, autocomplete = null;
 
     function kill(success) {
@@ -8610,7 +8968,7 @@ function suggest() {
     }
 
     function render_item(titem, prepend) {
-        let node = document.createElement("div");
+        const node = document.createElement("div");
         node.className = titem.no_space ? "suggestion s9nsp" : "suggestion";
         if (titem.r) {
             node.setAttribute("data-replacement", titem.r);
@@ -8619,31 +8977,36 @@ function suggest() {
             node.innerHTML = titem.sh;
             return node;
         }
-        let s = titem.s;
-        const lb = s.indexOf("{");
-        if (lb >= 0) {
-            const rb = s.indexOf("}", lb + 1), frag = document.createDocumentFragment();
-            if (lb > 0) {
-                frag.append(s.substring(0, lb));
+        const s = titem.s;
+        let s9t, pos = 0, lb, rb;
+        while ((lb = s.indexOf("{", pos)) >= 0
+               && (rb = s.indexOf("}", lb + 1)) >= 0) {
+            let co = s.indexOf(":", lb + 1);
+            if (co < 0 || co >= rb) {
+                co = rb;
             }
-            if (rb > lb + 1) {
-                frag.append($e("span", "s9ta", s.substring(lb + 1, rb)));
+            s9t = s9t || document.createDocumentFragment();
+            if (lb > pos) {
+                s9t.append(s.substring(pos, lb));
             }
-            if (rb > 0 && rb + 1 < s.length) {
-                frag.append(s.substring(rb + 1));
+            if (co > lb + 1) {
+                s9t.append($e("span", "s9ta", s.substring(lb + 1, co)));
             }
-            s = frag;
+            pos = rb + 1;
+        }
+        if (s9t && pos < s.length) {
+            s9t.append(s.substring(pos));
         }
         if (!titem.d && !titem.dh && !prepend) {
-            node.append(s);
+            node.append(s9t || s);
             return node;
         }
         if (prepend) {
             node.appendChild($e("span", "s9p", prepend));
         }
-        node.appendChild($e("span", "s9t", s));
+        node.appendChild($e("span", "s9t", s9t || s));
         if (titem.d || titem.dh) {
-            var s9d = document.createElement("span");
+            const s9d = document.createElement("span");
             s9d.className = "s9d";
             if (titem.dh) {
                 s9d.innerHTML = titem.dh;
@@ -8656,53 +9019,63 @@ function suggest() {
     }
 
     function finish_display(cinfo) {
-        if (!cinfo || !cinfo.items.length) {
+        if (!cinfo
+            || !cinfo.items.length
+            || !cinfo.cspan.spanMatches(elt)) {
             kill();
             return;
         }
-        var caretpos = elt.selectionStart,
-            precaretpos = caretpos - cinfo.lengths[0];
-        if (hiding && hiding === elt.value.substring(precaretpos, caretpos))
+        const cspan = cinfo.cspan;
+        if (hiding
+            && hiding === cspan.value.substring(cspan.startPos, cspan.indexPos)) {
             return;
+        }
 
         hiding = false;
         if (!hintdiv) {
-            hintdiv = make_bubble({anchor: "nw", color: "suggest"});
+            hintdiv = make_bubble({anchor: "nw", class: "suggest"});
             hintdiv.self().on("mousedown", function (evt) { evt.preventDefault(); })
                 .on("click", ".suggestion", click)
                 .on("mousemove", ".suggestion", hover);
             wasmouse = null;
         }
 
-        var i, clist = cinfo.items, same_list = false;
-        cinfo.startpos = precaretpos;
-        if (hintinfo && hintinfo.items && hintinfo.items.length === clist.length) {
-            for (same_list = true, i = 0; i !== clist.length; ++i) {
+        const clist = cinfo.items;
+        let same_list = false;
+        if (hintinfo
+            && hintinfo.items
+            && hintinfo.items.length === clist.length) {
+            same_list = true;
+            for (let i = 0; i !== clist.length; ++i) {
                 if (hintinfo.items[i] !== clist[i]) {
                     same_list = false;
                     break;
                 }
             }
         }
-        cinfo.editlength = cinfo.lengths[1];
-        if (hintinfo && hintinfo.startpos === cinfo.startpos) {
+        cinfo.editlength = cspan.endPos - cspan.indexPos;
+        if (hintinfo && hintinfo.cspan.startPos === cinfo.startPos) {
             cinfo.editlength = Math.min(cinfo.editlength, hintinfo.editlength);
         }
         hintinfo = cinfo;
 
-        var div;
+        let div;
         if (!same_list) {
-            var ml = [10, 30, 60, 90, 120];
-            for (i = 0; i !== ml.length && clist.length > ml[i]; ++i)
-                /* nada */;
-            if (cinfo.min_columns && cinfo.min_columns > i + 1)
+            const ml = [10, 30, 60, 90, 120];
+            let i = 0;
+            while (i !== ml.length && clist.length > ml[i]) {
+                ++i;
+            }
+            if (cinfo.min_columns && cinfo.min_columns > i + 1) {
                 i = cinfo.min_columns - 1;
-            if (clist.length < i + 1)
+            }
+            if (clist.length < i + 1) {
                 i = clist.length - 1;
+            }
             div = document.createElement("div");
             div.className = "suggesttable suggesttable" + (i + 1);
-            for (i = 0; i !== clist.length; ++i) {
-                div.appendChild(render_item(clist[i], cinfo.prefix));
+            for (const cliste of clist) {
+                div.appendChild(render_item(cliste, cspan.prefix));
             }
             hintdiv.html(div);
         } else {
@@ -8715,11 +9088,11 @@ function suggest() {
 
         let $elt = jQuery(elt),
             shadow = textarea_shadow($elt, elt.tagName === "INPUT" ? 2000 : 0),
-            positionpos = precaretpos;
-        if (cinfo.prefix
-            && positionpos >= cinfo.prefix.length
-            && elt.value.substring(positionpos - cinfo.prefix.length, positionpos) === cinfo.prefix) {
-            positionpos -= cinfo.prefix.length;
+            positionpos = cspan.startPos;
+        if (cspan.prefix
+            && positionpos >= cspan.prefix.length
+            && elt.value.substring(positionpos - cspan.prefix.length, positionpos) === cspan.prefix) {
+            positionpos -= cspan.prefix.length;
         }
         const wj = $e("span", null, "⁠");
         shadow[0].replaceChildren(elt.value.substring(0, positionpos), wj, elt.value.substring(positionpos));
@@ -8734,20 +9107,39 @@ function suggest() {
     }
 
     function display() {
-        var i = -1;
-        function next(cinfo) {
-            ++i;
-            if (cinfo || i == suggdata.promises.length)
-                finish_display(cinfo);
-            else {
-                var result = suggdata.promises[i](elt, hintinfo);
-                if (result && $.isFunction(result.then))
-                    result.then(next);
-                else
-                    next(result);
+        let results = [], done = false;
+        function next(i, pinfo) {
+            if (done) {
+                return;
+            }
+            if (pinfo && $.isFunction(pinfo.then)) {
+                results[i] = true;
+                pinfo.then(cinfo => next(i, cinfo));
+                return;
+            }
+            results[i] = pinfo;
+            let unresolved = false, showcinfo = null;
+            for (const cinfo of results) {
+                if (cinfo === true) {
+                    unresolved = true;
+                } else if (!cinfo || unresolved) {
+                    // skip
+                } else if (cinfo.best !== null) {
+                    done = true;
+                    showcinfo = cinfo;
+                    break;
+                } else if (!showcinfo) {
+                    showcinfo = cinfo;
+                }
+            }
+            if (done || !unresolved) {
+                finish_display(showcinfo);
             }
         }
-        next(null);
+        for (let i = 0; i !== suggdata.promises.length; ++i) {
+            next(i, suggdata.promises[i](elt, hintinfo));
+        }
+        next();
         will_display = false;
     }
 
@@ -8759,58 +9151,68 @@ function suggest() {
     }
 
     function do_complete(complete_elt) {
-        var repl;
-        if (complete_elt.hasAttribute("data-replacement"))
+        if (!hintinfo.cspan.spanMatches(elt)) {
+            kill(true);
+            return;
+        }
+
+        let repl;
+        if (complete_elt.hasAttribute("data-replacement")) {
             repl = complete_elt.getAttribute("data-replacement");
-        else if (complete_elt.firstChild.nodeType === Node.TEXT_NODE)
+        } else if (complete_elt.firstChild.nodeType === Node.TEXT_NODE) {
             repl = complete_elt.textContent;
-        else {
-            var n = complete_elt.firstChild;
+        } else {
+            let n = complete_elt.firstChild;
             while (n.className !== "s9t") {
                 n = n.nextSibling;
             }
             repl = n.textContent;
         }
 
-        var val = elt.value,
-            startPos = hintinfo.startpos,
-            endPos = startPos + hintinfo.lengths[0] + hintinfo.lengths[1],
-            sfxLen = hintinfo.lengths[2];
-        if (sfxLen) {
-            repl += val.substring(endPos, endPos + sfxLen);
-            endPos += sfxLen;
+        const cspan = hintinfo.cspan;
+        let val = elt.value, startPos = cspan.startPos, endPos = cspan.endPos;
+        const skipRe = cspan.skipRe || (cspan.smartPunctuation && punctre);
+        if (skipRe) {
+            skipRe.lastIndex = endPos;
+            const m = skipRe.exec(val);
+            if (m) {
+                endPos += m[0].length;
+                repl += val.substring(endPos - m[0].length, endPos);
+            }
         }
-        if (hintinfo.limit_replacement) {
+        if (cspan.limitReplacement) {
             endPos -= hintinfo.editlength;
-            while (endPos - startPos < repl.length && val.charCodeAt(endPos) === repl.charCodeAt(endPos - startPos)) {
+            while (endPos - startPos < repl.length
+                   && val.charCodeAt(endPos) === repl.charCodeAt(endPos - startPos)) {
                 ++endPos;
             }
         }
-        var outPos = startPos + repl.length;
+        let outPos = startPos + repl.length;
         if (hasClass(complete_elt, "s9nsp")) {
             spacestate = -1;
         } else {
             ++outPos;
             repl += " ";
-            spacestate = hintinfo.smart_punctuation ? outPos : -1;
+            spacestate = cspan.smartPunctuation ? outPos : -1;
         }
         if (startPos < 0 || endPos < 0 || startPos > endPos || endPos > val.length) {
-            let x = Object.assign({}, hintinfo);
+            const x = Object.assign({}, hintinfo);
             delete x.items;
             log_jserror(JSON.stringify({value:val,hint:x,repl:repl,startPos:startPos,endPos:endPos}));
         }
         elt.setRangeText(repl, startPos, endPos, "end");
-        if (hintinfo.postreplace)
-            hintinfo.postreplace(elt, repl, startPos);
+        if (hintinfo.postReplace) {
+            hintinfo.postReplace(elt, repl, startPos);
+        }
         $(elt).trigger("input");
 
         kill(true);
     }
 
     function move_active(k) {
-        var $sug = hintdiv.self().find(".suggestion"),
-            $active = hintdiv.self().find(".s9y"),
-            pos = null;
+        const $sug = hintdiv.self().find(".suggestion"),
+            $active = hintdiv.self().find(".s9y");
+        let pos = null;
         if (!$active.length) {
             if (k === "ArrowUp")
                 pos = -1;
@@ -8819,17 +9221,18 @@ function suggest() {
             else
                 return false;
         } else if (k === "ArrowUp" || k === "ArrowDown") {
-            for (pos = 0; pos !== $sug.length - 1 && $sug[pos] !== $active[0]; ++pos) {
+            pos = 0;
+            while (pos !== $sug.length - 1 && $sug[pos] !== $active[0]) {
+                ++pos;
             }
             pos += k === "ArrowDown" ? 1 : -1;
         } else if ((k === "ArrowLeft" && wasnav > 0)
                    || (k === "ArrowRight" && (wasnav > 0 || elt.selectionEnd === elt.value.length))) {
-            var $activeg = $active.geometry(),
-                nextadx = Infinity, nextady = Infinity,
-                isleft = k === "ArrowLeft",
-                side = (isleft ? "left" : "right");
-            for (var i = 0; i != $sug.length; ++i) {
-                var $thisg = $($sug[i]).geometry(),
+            const $activeg = $active.geometry(),
+                isleft = k === "ArrowLeft", side = isleft ? "left" : "right";
+            let nextadx = Infinity, nextady = Infinity;
+            for (let i = 0; i != $sug.length; ++i) {
+                const $thisg = $($sug[i]).geometry(),
                     dx = $activeg[side] - $thisg[side],
                     adx = Math.abs(dx),
                     ady = Math.abs(($activeg.top + $activeg.bottom) - ($thisg.top + $thisg.bottom));
@@ -8845,25 +9248,25 @@ function suggest() {
                 return true;
             }
         }
-        if (pos !== null) {
-            pos = (pos + $sug.length) % $sug.length;
-            if ($sug[pos] !== $active[0]) {
-                $active.removeClass("s9y");
-                addClass($sug[pos], "s9y");
-            }
-            wasnav = 2;
-            return true;
-        } else {
+        if (pos === null) {
             return false;
         }
+        pos = (pos + $sug.length) % $sug.length;
+        if ($sug[pos] !== $active[0]) {
+            $active.removeClass("s9y");
+            addClass($sug[pos], "s9y");
+        }
+        wasnav = 2;
+        return true;
     }
 
     function kp(evt) {
         var k = event_key(evt), m = event_key.modcode(evt),
             pspacestate = spacestate;
         if (k === "Escape" && !m) {
-            if (hintinfo) {
-                hiding = this.value.substring(hintinfo.startpos, hintinfo.startpos + hintinfo.lengths[0]);
+            if (hintinfo && hintinfo.cspan.spanMatches(this)) {
+                const cspan = hintinfo.cspan;
+                hiding = this.value.substring(cspan.startPos, cspan.indexPos);
                 kill();
                 evt.preventDefault();
                 handle_ui.stopImmediatePropagation(evt);
@@ -8881,12 +9284,14 @@ function suggest() {
                    && event_key.printable(evt)
                    && elt.selectionStart === elt.selectionEnd
                    && elt.selectionStart === pspacestate
-                   && elt.value.charCodeAt(pspacestate - 1) === 32
-                   && punctre.test(k)) {
-            elt.setRangeText(k, pspacestate - 1, pspacestate, "end");
-            evt.preventDefault();
-            handle_ui.stopPropagation(evt);
-            display_soon();
+                   && elt.value.charCodeAt(pspacestate - 1) === 32) {
+            punctre.lastIndex = 0;
+            if (punctre.test(k)) {
+                elt.setRangeText(k, pspacestate - 1, pspacestate, "end");
+                evt.preventDefault();
+                handle_ui.stopPropagation(evt);
+                display_soon();
+            }
         }
         wasnav = Math.max(wasnav - 1, 0);
         wasmouse = null;
@@ -8941,51 +9346,83 @@ suggest.add_builder = function (name, f) {
     builders[name] = f;
 };
 
+suggest.CompletionSpan = CompletionSpan;
+
 return suggest;
 })();
 
+
+function suggest_tag_emoji(d) {
+    function finish_suggest_tag_emoji(emoji) {
+        for (const it of d.items) {
+            if (!it.s.startsWith(":") || !it.s.endsWith(":")) {
+                continue;
+            }
+            const s = it.s.substring(1, it.s.length - 1);
+            if (!emoji.emoji[s]) {
+                continue;
+            }
+            it.sh = `<span class="nw">${emoji.emoji[s]} ${it.s}</span>`;
+        }
+        return d;
+    }
+
+    for (const it of d.items) {
+        if (it.s.startsWith(":") && it.s.endsWith(":")) {
+            return demand_load.emoji_codes().then(finish_suggest_tag_emoji);
+        }
+    }
+    return d;
+}
+
 hotcrp.suggest.add_builder("tags", function (elt) {
-    var x = completion_split(elt), m, n;
-    if (x && (m = x[0].match(/(?:^|\s)(#?)([^#\s]*)$/))) {
-        n = x[1].match(/^([^#\s]*)((?:#[-+]?(?:\d+\.?|\.\d)\d*)?)/);
-        return demand_load.tags().then(make_suggestions(m[2], n[1], {suffix: n[2]}));
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchLeft(/(?:^|\s)#?([^#\s]*)$/)) {
+        cs.matchRight(/([^#\s]*)/y);
+        cs.skipRe = /#[-+]?(?:\d+\.?|\.\d)\d*/y;
+        return cs.filterFrom(demand_load.tags()).then(suggest_tag_emoji);
     }
 });
 
 hotcrp.suggest.add_builder("editable-tags", function (elt) {
-    var x = completion_split(elt), m, n;
-    if (x && (m = x[0].match(/(?:^|\s)(#?)([^#\s]*)$/))) {
-        n = x[1].match(/^([^#\s]*)((?:#[-+]?(?:\d+\.?|\.\d)\d*)?)/);
-        return demand_load.editable_tags().then(make_suggestions(m[2], n[1], {suffix: n[2]}));
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchLeft(/(?:^|\s)#?([^#\s]*)$/)) {
+        cs.matchRight(/([^#\s]*)/y);
+        cs.skipRe = /#[-+]?(?:\d+\.?|\.\d)\d*/y;
+        return cs.filterFrom(demand_load.editable_tags()).then(suggest_tag_emoji);
     }
 });
 
 hotcrp.suggest.add_builder("sitewide-editable-tags", function (elt) {
-    var x = completion_split(elt), m, n;
-    if (x && (m = x[0].match(/(?:^|\s)(#?)([^#\s]*)$/))) {
-        n = x[1].match(/^([^#\s]*)((?:#[-+]?(?:\d+\.?|\.\d)\d*)?)/);
-        return demand_load.sitewide_editable_tags().then(make_suggestions(m[2], n[1], {suffix: n[2]}));
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchLeft(/(?:^|\s)#?([^#\s]*)$/)) {
+        cs.matchRight(/([^#\s]*)/y);
+        cs.skipRe = /#[-+]?(?:\d+\.?|\.\d)\d*/y;
+        return cs.filterFrom(demand_load.sitewide_editable_tags()).then(suggest_tag_emoji);
     }
 });
 
 hotcrp.suggest.add_builder("papersearch", function (elt) {
-    var x = completion_split(elt), m, n;
-    if (x && (m = x[0].match(/.*?(?:^|[^\w:])((?:tag|r?order):\s*#?|#|(?:show|hide):\s*(?:#|tag:|tagval:|tagvalue:))([^#\s()]*)$/))) {
-        n = x[1].match(/^([^#\s()]*)/);
-        return demand_load.tags().then(make_suggestions(m[2], n[1], {prefix: m[1]}));
-    } else if (x && (m = x[0].match(/.*?\b((?:[A-Za-z0-9]{1,10}):(?:[^"\s()]*|"[^"]*))$/))) {
-        n = x[1].match(/^([^\s()]*)/);
-        return demand_load.search_completion().then(make_suggestions(m[1], n[1], {ml: m[1].indexOf(":") + 1}));
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchPrefixLeft(/(?:^|[^\w:])((?:tag|r?order):\s*#?|#|(?:show|hide):\s*(?:#|tag:|tagval:|tagvalue:))([^#\s()]*)$/)) {
+        cs.matchRight(/([^#\s()]*)/y);
+        cs.skipRe = /#[-+]?(?:\d+\.?|\.\d)\d*/y;
+        return cs.filterFrom(demand_load.tags());
+    } else if (cs.matchLeft(/\b((?:[A-Za-z0-9]{1,10}):(?:[^"\s()]*|"[^"]*))$/)) {
+        cs.matchRight(/([^\s()]*)/y);
+        cs.minLength = cs.span().indexOf(":") + 1;
+        return cs.filterFrom(demand_load.search_completion());
     }
 });
 
 hotcrp.suggest.add_builder("pc-tags", function (elt) {
-    var x = completion_split(elt), m, n;
-    if (x && (m = x[0].match(/(?:^|\s)(#?)([^#\s]*)$/))) {
-        n = x[1].match(/^(\S*)/);
-        return demand_load.pc().then(function (pc) {
-            return make_suggestions(m[2], n[1])(pc.tags || []);
-        });
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchLeft(/(?:^|\s)#?([^#\s]*)$/)) {
+        cs.matchRight(/([^#\s]*)/y);
+        cs.skipRe = /#[-+]?(?:\d+\.?|\.\d)\d*/y;
+        return cs.filterFrom(demand_load.pc().then(function (pc) {
+            return pc.tags || [];
+        }));
     }
 });
 
@@ -8999,38 +9436,63 @@ function suggest_emoji_postreplace(elt, repl, startPos) {
 
 hotcrp.suggest.add_builder("suggest-emoji", function (elt) {
     /* eslint-disable no-misleading-character-class */
-    var x = completion_split(elt), m;
-    if (x && (m = x[0].match(/(?:^|[\s(\u20e3-\u23ff\u2600-\u27ff\ufe0f\udc00-\udfff]):((?:|\+|\+?[-_0-9a-zA-Z]+):?)$/))
-        && /^(?:$|[\s)\u20e3-\u23ff\u2600-\u27ff\ufe0f\ud83c-\ud83f])/.test(x[1])) {
-        return demand_load.emoji_completion(m[1].toLowerCase()).then(make_suggestions(":" + m[1], "", {case_sensitive: "lower", max_items: 8, postreplace: suggest_emoji_postreplace}));
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchLeft(/(?:^|[\s(\u20e3-\u23ff\u2600-\u27ff\ufe0f\udc00-\udfff])(:(?:|\+|\+?[-_0-9a-zA-Z]+):?)$/)
+        && cs.matchRight(/(?:$|[\s)\u20e3-\u23ff\u2600-\u27ff\ufe0f\ud83c-\ud83f])/y)) {
+        cs.caseSensitive = "lower";
+        cs.maxItems = 8;
+        cs.postReplace = suggest_emoji_postreplace;
+        return cs.filterFrom(demand_load.emoji_completion(cs.span().toLowerCase()));
+    }
+    /* eslint-enable no-misleading-character-class */
+});
+
+hotcrp.suggest.add_builder("suggest-emoji-codes", function (elt) {
+    /* eslint-disable no-misleading-character-class */
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.matchLeft(/(?:^|\s)(:(?:|\+|\+?[-_0-9a-zA-Z]+):?)$/)
+        && cs.matchRight(/(?:$|\s)/y)) {
+        cs.caseSensitive = "lower";
+        cs.maxItems = 32;
+        cs.postReplace = suggest_emoji_postreplace;
+        return cs.filterFrom(demand_load.emoji_completion(cs.span().toLowerCase(), {code: true}));
     }
     /* eslint-enable no-misleading-character-class */
 });
 
 hotcrp.suggest.add_builder("mentions", function (elt, hintinfo) {
-    var x = completion_split(elt), precaret, m, prom;
-    if (!x) {
+    const cs = hotcrp.suggest.CompletionSpan.at(elt);
+    if (cs.span() === null) {
         return null;
     }
     if (hintinfo
-        && hintinfo.startpos < x[0].length - 1
-        && x[0].charCodeAt(hintinfo.startpos - 1) === 0x40
-        && completion_search_prefix(hintinfo, x[0].substring(hintinfo.startpos))) {
-        precaret = x[0].substring(hintinfo.startpos);
-    } else if ((m = x[0].match(/(?:^|[-+,:;\s–—([{/])@(|\p{L}(?:[\p{L}\p{M}\p{N}]|[-.](?=\p{L}))*)$/u))) {
-        precaret = m[1];
-    } else {
+        && hintinfo.cspan.startPos < cs.indexPos - 1
+        && cs.value.charCodeAt(hintinfo.cspan.startPos - 1) === 0x40) {
+        cs.startPos = hintinfo.cspan.startPos;
+        if (!cs.searchLeft(hintinfo.items)) {
+            cs.startPos = cs.indexPos;
+        }
+    }
+    if (cs.startPos === cs.indexPos
+        && !cs.matchLeft(/(?:^|[-+,:;\s–—([{/])@(|\p{L}(?:[\p{L}\p{M}\p{N}]|[-.](?=\p{L}))*)$/u)) {
         return null;
     }
-    m = x[1].match(/^(?:[\p{L}\p{M}\p{N}]|[-.](?=\p{L}))*/u);
-    prom = demand_load.mentions();
-    if (elt.form.elements.visibility
-        && elt.form.elements.visibility.value !== "au") {
+    cs.matchRight(/(?:[\p{L}\p{M}\p{N}]|[-.](?=\p{L}))*/uy);
+    cs.prefix = "@";
+    cs.minLength = Math.min(2, cs.indexPos - cs.startPos);
+    cs.smartPunctuation = cs.limitReplacement = true;
+    let prom = demand_load.mentions();
+    const vise = elt.form.elements.visibility;
+    if (vise && vise.value === "admin") {
+        prom = prom.then(function (l) {
+            return l.filter(function (x) { return x.admin; });
+        });
+    } else if (vise && vise.value !== "au") {
         prom = prom.then(function (l) {
             return l.filter(function (x) { return !x.au; });
         });
     }
-    return prom.then(make_suggestions(precaret, m[0], {prefix: "@", ml: Math.min(2, precaret.length), smart_punctuation: true, limit_replacement: true}));
+    return cs.filterFrom(prom);
 });
 
 
@@ -9361,8 +9823,8 @@ function handle_list(e, href) {
         if (hl.tagName === "TABLE"
             && hasClass(hl, "pltable")
             && hl.hasAttribute("data-reordered")
-            && document.getElementById("footer"))
-            // Existence of `#footer` checks that the table is fully loaded
+            && document.getElementById("p-footer"))
+            // Existence of `#p-footer` checks that the table is fully loaded
             info.reorder(hl.tBodies[0]);
         let m = /^[^/]*\/(\d+)(?:$|[a-zA-Z]*\/|\?)/.exec(sitehref);
         set_cookie(info, m ? +m[1] : null);
@@ -9640,44 +10102,43 @@ var paperlist_tag_ui = (function () {
 function tag_canonicalize(tag) {
     if (tag && tag.charCodeAt(0) === 126 && tag.charCodeAt(1) !== 126) {
         return siteinfo.user.uid + tag;
-    } else {
-        return tag;
     }
+    return tag;
 }
 
 function tag_simplify(tag) {
     if (tag && tag.startsWith(siteinfo.user.uid + "~")) {
         return tag.substring(("" + siteinfo.user.uid).length);
-    } else {
-        return tag;
     }
+    return tag;
 }
 
 function tagvalue_parse(s) {
-    if (s.match(/^\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*$/))
+    if (s.match(/^\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*$/)) {
         return +s;
+    }
     s = s.replace(/^\s+|\s+$/, "").toLowerCase();
-    if (s === "y" || s === "yes" || s === "t" || s === "true" || s === "✓")
+    if (s === "y" || s === "yes" || s === "t" || s === "true" || s === "✓") {
         return 0;
-    else if (s === "n" || s === "no" || s === "" || s === "f" || s === "false" || s === "na" || s === "n/a" || s === "clear")
+    } else if (s === "n" || s === "no" || s === "" || s === "f" || s === "false" || s === "na" || s === "n/a" || s === "clear" || s === "delete") {
         return false;
-    else
-        return null;
+    }
+    return null;
 }
 
 function tagvalue_unparse(tv) {
-    if (tv === false || tv == null)
+    if (tv === false || tv == null) {
         return "";
-    else
-        return sprintf("%.2f", tv).replace(/\.0+$|0+$/, "");
+    }
+    return sprintf("%.2f", tv).replace(/\.0+$|0+$/, "");
 }
 
 function row_tagvalue(row, tag) {
-    var tags = row.getAttribute("data-tags"), m;
-    if (tags && (m = new RegExp("(?:^| )" + regexp_quote(tag) + "#(\\S+)", "i").exec(tags)))
+    let tags = row.getAttribute("data-tags"), m;
+    if (tags && (m = new RegExp("(?:^| )" + regexp_quote(tag) + "#(\\S+)", "i").exec(tags))) {
         return tagvalue_parse(m[1]);
-    else
-        return false;
+    }
+    return false;
 }
 
 
@@ -10274,7 +10735,7 @@ handle_ui.on("js-annotate-order", function () {
                 type: "button",
                 class: "ml-2 need-tooltip js-delete-ta",
                 "aria-label": "Delete annotation"
-            }, svge_use_licon("trash")),
+            }, $svg_use_licon("trash")),
             fieldset = $e("fieldset", "mt-3 mb-2",
                 $e("legend", null,
                     "#" + dtag + "#",
@@ -10382,8 +10843,8 @@ function DraggableTable(srctr, dragtag) {
     this.srcindex = null;
     this.dragindex = null;
 
-    var tr, tranal = null, groupindex = -1;
-    for (tr = this.tablelist.tBodies[0].firstChild; tr; tr = tr.nextSibling) {
+    let tranal = null, groupindex = -1;
+    for (let tr = this.tablelist.tBodies[0].firstChild; tr; tr = tr.nextSibling) {
         if (tr.nodeName === "TR") {
             if (hasClass(tr, "plx")) {
                 tranal.back = tr;
@@ -10412,9 +10873,8 @@ DraggableTable.prototype.group_back_index = function (i) {
 DraggableTable.prototype.content = function () {
     if (this.srcindex !== null) {
         return this.rs[this.srcindex].legend();
-    } else {
-        return "None";
     }
+    return "None";
 };
 
 function Tagval_DraggableTable(srctr, dragtag) {
@@ -10423,12 +10883,12 @@ function Tagval_DraggableTable(srctr, dragtag) {
     this.gapf = function () { return 1; };
     // annotated groups are assumed to be gapless
     if (this.grouprs.length > 0) {
-        var sd = 0, nd = 0, s2d = 0, lv = null, d, i;
-        for (i = 0; i < this.rs.length; ++i) {
+        let sd = 0, nd = 0, s2d = 0, lv = null;
+        for (let i = 0; i < this.rs.length; ++i) {
             if (this.rs[i].id && this.rs[i].tagval !== false) {
                 if (lv !== null) {
                     ++nd;
-                    d = this.rs[i].tagval - lv;
+                    const d = this.rs[i].tagval - lv;
                     sd += d;
                     s2d += d * d;
                 }
@@ -10442,10 +10902,11 @@ function Tagval_DraggableTable(srctr, dragtag) {
 }
 Object.setPrototypeOf(Tagval_DraggableTable.prototype, DraggableTable.prototype);
 Tagval_DraggableTable.prototype.content = function () {
-    var frag = document.createDocumentFragment(), newval,
+    const frag = document.createDocumentFragment(),
         unchanged = this.srcindex === this.dragindex,
         srcra = this.rs[this.srcindex];
     frag.append(srcra.legend());
+    let newval;
     if (unchanged) {
         newval = srcra.tagval;
     } else {
@@ -10461,9 +10922,9 @@ Tagval_DraggableTable.prototype.content = function () {
     return frag;
 };
 Tagval_DraggableTable.prototype.compute = function () {
-    var i, j, len = this.rs.length, d, tv,
-        si = this.srcindex, di = this.dragindex,
+    const len = this.rs.length, si = this.srcindex, di = this.dragindex,
         sigroup = this.rs[si].isgroup, nsi = this.group_back_index(si) - si + 1;
+    let i, j, d, tv;
     // initialize to unchanged, reset gap
     for (i = 0; i !== len; ++i) {
         this.rs[i].newtagval = this.rs[i].tagval;
@@ -10555,13 +11016,12 @@ Tagval_DraggableTable.prototype.compute = function () {
     }
 };
 Tagval_DraggableTable.prototype.commit = function () {
-    var saves = [], annosaves = [], i, e, row, nv,
-        srcra = this.rs[this.srcindex];
+    const saves = [], annosaves = [], srcra = this.rs[this.srcindex];
     this.compute();
-    for (i = 0; i !== this.rs.length; ++i) {
-        row = this.rs[i];
+    for (let i = 0; i !== this.rs.length; ++i) {
+        const row = this.rs[i];
         if (row.newtagval !== row.tagval) {
-            nv = tagvalue_unparse(row.newtagval);
+            const nv = tagvalue_unparse(row.newtagval);
             if (row.id) {
                 saves.push("".concat(row.id, " ", this.dragtag, "#", nv === "" ? "clear" : nv));
             } else if (row.annoid) {
@@ -10570,7 +11030,7 @@ Tagval_DraggableTable.prototype.commit = function () {
         }
     }
     if (saves.length) {
-        e = srcra.front.querySelector("input[name='tag:".concat(this.dragtag, " ", srcra.id, "']"));
+        const e = srcra.front.querySelector("input[name='tag:".concat(this.dragtag, " ", srcra.id, "']"));
         $.post(hoturl("=api/assigntags", {forceShow: 1}),
             {tagassignment: saves.join(","), search: tablelist_search(this.tablelist)},
             make_tag_save_callback(e));
@@ -10598,12 +11058,12 @@ Assign_DraggableTable.prototype.drag_groupindex = function () {
     }
 };
 Assign_DraggableTable.prototype.content = function () {
-    var frag = document.createDocumentFragment(),
+    const frag = document.createDocumentFragment(),
         srcra = this.rs[this.srcindex],
         oldidx = srcra.groupindex,
-        newidx = this.drag_groupindex(),
-        legend;
+        newidx = this.drag_groupindex();
     frag.append(srcra.legend());
+    let legend;
     if (newidx < this.assigninfo.length) {
         legend = this.groupinfo[newidx].legend;
     } else {
@@ -10618,14 +11078,14 @@ Assign_DraggableTable.prototype.content = function () {
     return frag;
 };
 Assign_DraggableTable.prototype.commit = function () {
-    var as = [], i,
+    const as = [],
         srcra = this.rs[this.srcindex],
         oldidx = srcra.groupindex,
         newidx = this.drag_groupindex();
     function doassignlist(as, assignlist, id, ondrag) {
-        var i, len = (assignlist || []).length, x;
-        for (i = 0; i !== len; ++i) {
-            x = assignlist[i];
+        const len = (assignlist || []).length;
+        for (let i = 0; i !== len; ++i) {
+            let x = assignlist[i];
             if (x.ondrag === ondrag) {
                 x = Object.assign({pid: id}, x);
                 delete x.ondrag;
@@ -10634,7 +11094,7 @@ Assign_DraggableTable.prototype.commit = function () {
         }
     }
     if (oldidx !== newidx) {
-        for (i = 0; i !== this.assigninfo.length; ++i) {
+        for (let i = 0; i !== this.assigninfo.length; ++i) {
             i !== newidx && doassignlist(as, this.assigninfo[i], srcra.id, "leave");
         }
         doassignlist(as, this.assigninfo[newidx], srcra.id, "enter");
@@ -10643,7 +11103,9 @@ Assign_DraggableTable.prototype.commit = function () {
         $.post(hoturl("=api/assign", {}),
             {assignments: JSON.stringify(as), search: tablelist_search(this.tablelist)},
             function (rv) {
-                rv.ok && $(window).trigger("hotcrptags", [rv]);
+                if (rv.ok && rv.valid !== false) {
+                    $(window).trigger("hotcrptags", [rv]);
+                }
             });
     }
 };
@@ -10741,7 +11203,7 @@ Assign_DraggableTable.prototype.commit = function () {
 
         // create dragger
         if (!dragger) {
-            dragger = make_bubble({color: "prowdrag dark", anchor: "w!*"});
+            dragger = make_bubble({class: "prowdrag dark", anchor: "w!*"});
             window.disable_tooltip = true;
         }
 
@@ -10755,7 +11217,7 @@ Assign_DraggableTable.prototype.commit = function () {
             y = rowanal.rs[rowanal.rs.length - 1].bottom();
         dragger.html(rowanal.content())
             .at(rowanal.rs[rowanal.srcindex].left() + 36, y)
-            .color("prowdrag dark" + (rowanal.srcindex === rowanal.dragindex ? " unchanged" : ""));
+            .className("prowdrag dark" + (rowanal.srcindex === rowanal.dragindex ? " unchanged" : ""));
     }
 
     function prowdrag_mousedown(evt) {
@@ -10829,18 +11291,36 @@ return {
 
 
 // archive expansion
+function parse_docurl(href, base) {
+    const url = make_URL(href, base);
+    let p = url.pathname;
+    if (p.startsWith(siteinfo.base)) {
+        p = p.substring(siteinfo.base.length);
+    }
+    if (p.startsWith("u/")) {
+        p = p.replace(/^u\/\d+\//, "");
+    }
+    p = p.replace(/^(?:u\/\d+\/|)doc(?:\.php?|)\/?/, "");
+    if (p !== "" && !p.startsWith("/")) {
+        url.searchParams.set("doc", p);
+    }
+    return url.searchParams;
+}
+
 handle_ui.on("js-expand-archive", function (evt) {
-    var ar = (evt ? evt.target : this).closest(".archive"), ax;
+    let ar = (evt ? evt.target : this).closest(".archive"), ax;
     fold(ar);
     if (!ar.querySelector(".archiveexpansion")
         && (ax = ar.querySelector("a:not(.ui)"))) {
-        var sp = document.createElement("span");
+        const sp = document.createElement("span");
         sp.className = "archiveexpansion fx";
         ar.appendChild(sp);
-        $.ajax(hoturl_add(ax.href, "fn=consolidatedlisting"), {
+        const params = parse_docurl(ax.href);
+        params.set("consolidated", 1);
+        $.ajax(hoturl("api/archivelisting", params.toString()), {
             method: "GET", success: function (data) {
-                if (data.ok && data.result)
-                    sp.textContent = " (" + data.result + ")";
+                if (data.ok && data.consolidated_listing)
+                    sp.textContent = " (" + data.consolidated_listing + ")";
             }
         });
     }
@@ -10851,14 +11331,20 @@ handle_ui.on("js-expand-archive", function (evt) {
 function check_version(url, versionstr) {
     var x;
     function updateverifycb(json) {
-        var e;
-        if (json && json.messages && (e = $$("h-messages")))
-            e.innerHTML = json.messages + e.innerHTML;
+        let e;
+        if (!json
+            || !json.message_list
+            || json.message_list.length === 0
+            || !(e = $$("h-messages"))) {
+            return;
+        }
+        e.prepend(feedback.render_alert(json.message_list));
     }
     function updatecb(json) {
         if (json && json.updates && window.JSON)
-            jQuery.get(siteinfo.site_relative + "checkupdates.php",
-                       {data: JSON.stringify(json)}, updateverifycb);
+            jQuery.post(siteinfo.site_relative + "checkupdates.php",
+                        {data: JSON.stringify(json), post: siteinfo.postvalue},
+                        updateverifycb);
         else if (json && json.status)
             hotcrp.wstorage.site(false, "hotcrp_version_check", {at: now_msec(), version: versionstr});
     }
@@ -10874,9 +11360,12 @@ function check_version(url, versionstr) {
         jsonp: false, global: false, success: updatecb
     });
     handle_ui.on("js-check-version-ignore", function () {
-        var id = $(this).data("versionId");
-        $.post(siteinfo.site_relative + "checkupdates.php", {ignore: id, post: siteinfo.postvalue});
-        $("#softwareupdate_" + id).hide();
+        $.post(siteinfo.site_relative + "checkupdates.php", {ignore: this.getAttribute("data-errid"), post: siteinfo.postvalue});
+        const fl = this.closest("ul");
+        this.closest("li").remove();
+        if (!fl.firstChild) {
+            fl.closest(".msg").remove();
+        }
     });
 }
 
@@ -11223,7 +11712,7 @@ handle_ui.on("js-plinfo-edittags", function () {
             return;
         const elt = $e("div", "d-inline-flex",
             $e("div", "mf mf-text w-text",
-                $e("textarea", {name: "tags " + rv.pid, cols: 120, rows: 1, class: "want-focus need-suggest tags w-text", style: "vertical-align:-0.5rem", "data-tooltip-anchor": "v", "id": "tags " + rv.pid, "spellcheck": "false"})),
+                $e("textarea", {name: "tags " + rv.pid, cols: 120, rows: 1, class: "want-focus need-suggest editable-tags suggest-emoji-codes w-text", style: "vertical-align:-0.5rem", "data-tooltip-anchor": "v", "id": "tags " + rv.pid, "spellcheck": "false"})),
             $e("button", {type: "button", name: "tagsave " + rv.pid, class: "btn-primary ml-2"}, "Save"),
             $e("button", {type: "button", name: "tagcancel " + rv.pid, class: "ml-2"}, "Cancel"));
         set_pidfield(plistui.fields.tags, pidfe, elt);
@@ -11359,6 +11848,7 @@ hotcrp.render_list = function () {
     $(".need-tags").each(function () {
         render_row_tags(this.closest(".pl_tags"));
     });
+    $(".need-tooltip").each(hotcrp.tooltip);
     $(".pltable-draggable").each(paperlist_tag_ui.prepare_draggable);
     render_text.on_page();
 }
@@ -11420,26 +11910,44 @@ function fold_field(plistui, f, folded) {
 }
 
 function make_callback(plistui, type) {
-    let f, values, tr;
+    let f, result, tr, vindex = 0, vimap;
+    function find_data(pid) {
+        const p = result.papers[vindex];
+        if (p && p.pid === pid) {
+            ++vindex;
+            return p;
+        }
+        if (vimap == null) {
+            vimap = {};
+            for (const vp of result.papers) {
+                vimap[vp.pid] = vp;
+            }
+        }
+        return vimap[pid] || null;
+    }
     function render_some() {
-        let index = plistui.field_index(f), htmlk = f.name, n = 0,
-            table = tr.closest("table");
+        const index = plistui.field_index(f), htmlk = f.name;
+        let n = 0, table = tr.closest("table");
         while (n < 64 && tr) {
             if (tr.nodeName === "TR"
                 && tr.hasAttribute("data-pid")
                 && hasClass(tr, "pl")) {
                 const p = +tr.getAttribute("data-pid"),
-                    data = values.data[p],
-                    attr = values.attr && values.attr[p],
-                    classes = values.classes && values.classes[p];
-                if (attr) {
-                    for (const k in attr) {
-                        tr.setAttribute(k, attr[k]);
-                    }
-                }
+                    data = find_data(p);
                 if (data) {
-                    const e = plistui.pidfield(p, f, index);
-                    set_pidfield(f, e, data[htmlk], classes && classes[htmlk]);
+                    const attr = data["$attributes"];
+                    if (attr) {
+                        for (const k in attr) {
+                            tr.setAttribute(k, attr[k]);
+                        }
+                    }
+                    const e = plistui.pidfield(p, f, index),
+                        content = data[htmlk] || "";
+                    if (typeof content === "string") {
+                        set_pidfield(f, e, content);
+                    } else {
+                        set_pidfield(f, e, content.html, content.classes);
+                    }
                 }
                 ++n;
             }
@@ -11465,8 +11973,8 @@ function make_callback(plistui, type) {
         ensure_field(plistui, f);
         tr = plistui.pltable.querySelector("tr.pl");
         tr && render_some();
-        if (values.stat && f.name in values.stat) {
-            render_statistics(values.stat[f.name]);
+        if (result.statistics && f.name in result.statistics) {
+            render_statistics(result.statistics[f.name]);
         }
         check_statistics(plistui);
     }
@@ -11474,11 +11982,13 @@ function make_callback(plistui, type) {
         if (!rv.ok) {
             return;
         }
-        if (rv.fields && rv.fields[type]) {
-            plistui.load_field(rv.fields[type]);
+        for (let fv of rv.fields || []) {
+            plistui.load_field(fv);
         }
-        values = rv;
-        $(render_start);
+        result = rv;
+        if (plistui.fields[type]) {
+            $(render_start);
+        }
     };
 }
 
@@ -11534,12 +12044,12 @@ function plinfo(plistui, type, hidden, form) {
     const pctr = plistui.pltable;
     let ses = pctr.getAttribute("data-fold-session-prefix");
     if (need_load) {
-        const loadargs = {fn: "fieldhtml", f: load_type};
+        const loadargs = {f: load_type, format: "html"};
         if (ses) {
             loadargs.session = plinfo_session(ses, type, hidden, form);
             ses = null;
         }
-        $.get(hoturl("=api", $.extend(loadargs, hotlist_search_params(pctr, true))),
+        $.get(hoturl("=api/search", $.extend(loadargs, hotlist_search_params(pctr, true))),
               make_callback(plistui, type));
     } else if (hidden !== (!f || f.missing || f.hidden)) {
         fold_field(plistui, f, hidden);
@@ -11612,19 +12122,22 @@ function plist_hotcrptags(plistui, rv) {
 }
 
 $(window).on("hotcrptags", function (evt, rv) {
-    var i;
     $(".need-plist").each(make_plist);
     if (rv.ids) {
-        for (i = 0; i !== all_plists.length; ++i) {
-            paperlist_tag_ui.try_reorder(all_plists[i].pltable, rv);
+        for (const plist of all_plists) {
+            paperlist_tag_ui.try_reorder(plist.pltable, rv);
         }
     }
     if (rv.pid) {
-        for (i = 0; i !== all_plists.length; ++i) {
-            plist_hotcrptags(all_plists[i], rv);
+        for (const plist of all_plists) {
+            plist_hotcrptags(plist, rv);
         }
-    } else if (rv.p) {
-        for (i in rv.p) {
+    } else if (rv.papers) {
+        for (const paper of rv.papers) {
+            $(window).trigger("hotcrptags", [paper]);
+        }
+    } else if (rv.p) /* backward compat */ {
+        for (const i in rv.p) {
             rv.p[i].pid = +i;
             $(window).trigger("hotcrptags", [rv.p[i]]);
         }
@@ -11676,16 +12189,20 @@ handle_ui.on("js-override-conflict", function () {
     $(pr, prb).find(".fx5").removeClass("fx5").addClass("fxx5");
 });
 
-handle_ui.on("js-plinfo", function (evt) {
-    if (this.type !== "checkbox" || !this.name.startsWith("show")) {
+handle_ui.on("change.js-plinfo", function (evt) {
+    if (this.type !== "checkbox") {
         throw new Error("bad plinfo");
     }
     const plistui = make_plist.call(mainlist()), hidden = !this.checked;
     let fname;
     if (this.name === "show" || this.name === "show[]") {
         fname = this.value;
-    } else {
+    } else if (this.name === "forceShow") {
+        fname = "force";
+    } else if (this.name.startsWith("show")) {
         fname = this.name.substring(4);
+    } else {
+        throw new Error("bad plinfo");
     }
     if (fname === "force") {
         fold_override(plistui.pltable, hidden);
@@ -11710,7 +12227,6 @@ handle_ui.on("js-plinfo", function (evt) {
     } else {
         plinfo(plistui, fname, hidden, this.form);
     }
-    evt.preventDefault();
 });
 
 })();
@@ -12093,8 +12609,8 @@ handle_ui.on("js-reauth", function (evt) {
 
 // paper UI
 handle_ui.on("js-check-format", function () {
-    var $self = $(this), $d = $self.closest(".has-document"),
-        $cf = $d.find(".document-format");
+    var $self = $(this), doce = this.closest(".has-document"),
+        $cf = $(doce).find(".document-format");
     if (this && "tagName" in this && this.tagName === "A")
         $self.addClass("hidden");
     var running = setTimeout(function () {
@@ -12102,7 +12618,8 @@ handle_ui.on("js-check-format", function () {
     }, 1000);
     $.ajax(hoturl("=api/formatcheck", {p: siteinfo.paperid}), {
         timeout: 20000, data: {
-            dt: $d[0].getAttribute("data-dtype"), docid: $d[0].getAttribute("data-docid")
+            dt: doce.getAttribute("data-dt"),
+            docid: doce.getAttribute("data-docid")
         },
         success: function (data) {
             clearTimeout(running);
@@ -12158,7 +12675,8 @@ function background_format_check() {
         });
     } else if (hasClass(needed, "is-npages")
                && (pid = needed.closest("[data-pid]"))) {
-        $.ajax(hoturl("api/formatcheck", {p: pid.getAttribute("data-pid"), dtype: needed.getAttribute("data-dtype") || "0", soft: 1}), {
+        const dt = needed.getAttribute("data-dt") || "0";
+        $.ajax(hoturl("api/formatcheck", {p: pid.getAttribute("data-pid"), dt: dt, soft: 1}), {
             success: function (data) {
                 if (data && data.ok)
                     needed.parentNode.replaceChild(document.createTextNode(data.npages), needed);
@@ -12167,7 +12685,8 @@ function background_format_check() {
         });
     } else if (hasClass(needed, "is-nwords")
                && (pid = needed.closest("[data-pid]"))) {
-        $.ajax(hoturl("api/formatcheck", {p: pid.getAttribute("data-pid"), dtype: needed.getAttribute("data-dtype") || "0", soft: 1}), {
+        const dt = needed.getAttribute("data-dt") || "0";
+        $.ajax(hoturl("api/formatcheck", {p: pid.getAttribute("data-pid"), dt: dt, soft: 1}), {
             success: function (data) {
                 if (data && data.ok)
                     needed.parentNode.replaceChild(document.createTextNode(data.nwords), needed);
@@ -12208,7 +12727,7 @@ handle_ui.on("js-add-attachment", function () {
     var max_size = attache.getAttribute("data-document-max-size"),
         doce = $e("div", "has-document document-new-instance hidden",
             $e("div", "document-upload", filee), actionse);
-    doce.setAttribute("data-dtype", attache.getAttribute("data-dtype"));
+    doce.setAttribute("data-dt", attache.getAttribute("data-dt"));
     doce.setAttribute("data-document-name", name);
     if (max_size != null)
         doce.setAttribute("data-document-max-size", max_size);
@@ -12230,7 +12749,8 @@ handle_ui.on("js-replace-document", function () {
         doce.querySelector(".document-replacer").before(actions);
     }
     if (!u) {
-        var dname = doce.getAttribute("data-document-name") || ("opt" + doce.getAttribute("data-dtype"));
+        const dt = doce.getAttribute("data-dt");
+        var dname = doce.getAttribute("data-document-name") || ("opt" + dt);
         u = $e("input", "uich document-uploader");
         u.id = u.name = dname + ":file";
         u.type = "file";
@@ -12355,16 +12875,16 @@ handle_ui.on("document-uploader", function (event) {
         if (r.token) {
             token = r.token;
         }
-        if (r.server_progress_max) {
-            sprogress0 = r.server_progress_loaded;
-            sprogress1 = r.server_progress_max;
+        if (r.progress_max) {
+            sprogress0 = r.progress_value;
+            sprogress1 = r.progress_max;
             progress();
         }
         var args = {p: siteinfo.paperid};
-        if (token)
+        if (token) {
             args.token = token;
-        else {
-            args.dtype = doce.getAttribute("data-dtype");
+        } else {
+            args.dt = doce.getAttribute("data-dt");
             args.start = 1;
         }
         if (cancelled) {
@@ -12373,10 +12893,10 @@ handle_ui.on("document-uploader", function (event) {
                 $.ajax(hoturl("=api/upload", args), {method: "POST"});
             }
         } else if (!r.hash) {
-            var fd = new FormData, myxhr;
+            let fd = new FormData, myxhr;
             fd.append("mimetype", file.type);
             fd.append("filename", file.name);
-            var endpos = Math.min(size, pos + blob_limit);
+            const endpos = Math.min(size, pos + blob_limit);
             uploading = endpos - pos;
             if (uploading !== 0) {
                 args.offset = pos;
@@ -12457,6 +12977,101 @@ handle_ui.on("js-remove-document", function () {
     }
 });
 
+(function () {
+let potconf_timeout, potconf_status = 0;
+function update_potential_conflicts() {
+    potconf_timeout = null;
+    if (potconf_status === 1) {
+        potconf_status = 2;
+        return;
+    }
+    potconf_status = 1;
+    const fd = new FormData,
+        f = document.getElementById("f-paper"),
+        aufs = f.querySelector("fieldset[name=\"authors\"]"),
+        auin = aufs ? aufs.querySelectorAll("input[name]") : [];
+    for (const e of auin) {
+        fd.set(e.name, e.value);
+    }
+    if (f.elements.collaborators) {
+        fd.set("collaborators", f.elements.collaborators.value);
+    }
+    $.ajax(hoturl("=api/potentialconflicts", {p: f.getAttribute("data-pid"), ":method:": "GET"}), {
+        method: "POST", data: fd, processData: false, contentType: false,
+        success: save_potential_conflicts
+    });
+}
+function save_potential_conflicts(d) {
+    const old_potconf_status = potconf_status;
+    potconf_status = 0;
+    if (old_potconf_status === 2) {
+        update_potential_conflicts();
+    }
+    if (!d.ok || !d.potential_conflicts) {
+        return;
+    }
+    const fs = document.getElementById("pc_conflicts").closest("fieldset"),
+        cul = fs.lastChild.firstChild,
+        nul = cul.nextSibling,
+        pc_order = fs.getAttribute("data-pc-order").split(/ /),
+        potconf_map = {};
+    for (const potconf of d.potential_conflicts) {
+        if (potconf.type !== "potentialconflict") {
+            continue;
+        }
+        potconf_map[potconf.uid] = potconf;
+        let tt = document.getElementById(`d-pcconf:${potconf.uid}`);
+        if (!tt) {
+            tt = hotcrp.make_bubble.skeleton();
+            tt.id = `d-pcconf:${potconf.uid}`;
+            fs.lastChild.appendChild(tt);
+        }
+        if (potconf.tooltip !== "<5>" + tt.firstChild.innerHTML) {
+            render_text.onto(tt.firstChild, "f", potconf.tooltip);
+        }
+    }
+    let cli = cul.firstChild, nli = nul.firstChild;
+    for (const uid of pc_order) {
+        const isc = cli && cli.getAttribute("data-uid") === uid,
+            isn = nli && nli.getAttribute("data-uid") === uid;
+        if (!isc && !isn) {
+            continue;
+        }
+        const li = isc ? cli : nli, elt = li.firstChild;
+        if (isc) {
+            cli = cli.nextSibling;
+        } else {
+            nli = nli.nextSibling;
+        }
+        const wantc = potconf_map[uid];
+        if (wantc) {
+            if (!isc) {
+                elt.appendChild($e("div", "pcconfmatch"));
+                cul.insertBefore(li, cli);
+            }
+            if (wantc.description !== "<0>" + elt.lastChild.textContent) {
+                render_text.onto(elt.lastChild, "f", wantc.description);
+            }
+            addClass(elt, "want-tooltip");
+            elt.setAttribute("aria-describedby", `d-pcconf:${uid}`);
+        } else if (isc) {
+            if (hasClass(elt.lastChild, "pcconfmatch")) {
+                elt.lastChild.remove();
+            }
+            if (!hasClass(elt, "pcconf-conflicted")) {
+                nul.insertBefore(li, nli);
+            }
+            removeClass(elt, "want-tooltip");
+            elt.removeAttribute("aria-describedby");
+        }
+    }
+}
+handle_ui.on("js-update-potential-conflicts", function () {
+    potconf_timeout && clearTimeout(potconf_timeout);
+    potconf_timeout = setTimeout(update_potential_conflicts, 1000);
+});
+})();
+
 handle_ui.on("js-withdraw", function () {
     const f = this.form, $pu = $popup({near: this, action: f});
     $pu.append($e("p", null, "Are you sure you want to withdraw this " + siteinfo.snouns[0] + " from consideration and/or publication?" + (this.hasAttribute("data-revivable") ? "" : " Only administrators can undo this step.")),
@@ -12492,7 +13107,7 @@ handle_ui.on("js-clickthrough", function () {
                 $container.find(".need-clickthrough-enable").prop("disabled", false).removeClass("need-clickthrough-enable");
                 $container.find(".js-clickthrough-terms").slideUp();
             } else {
-                make_bubble("You can’t continue to review until you accept these terms.", "errorbubble")
+                make_bubble({content: "You can’t continue to review until you accept these terms.", class: "errorbubble"})
                     .anchor("w").near(self);
             }
         });
@@ -12519,7 +13134,7 @@ handle_ui.on("pspcard-fold", function (evt) {
 });
 
 (function ($) {
-var edit_conditions = {}, edit_conditions_scheduled = false;
+let edit_conditions = {}, edit_conditions_scheduled = false;
 
 function prepare_paper_select() {
     var self = this,
@@ -12568,12 +13183,9 @@ function prepare_paper_select() {
         }
     }
     function keypress(evt) {
-        if (event_key(evt) === " ")
-            /* nothing */;
-        else if (event_key.printable(evt))
-            keyed = now_msec();
-        else
-            keyed = 0;
+        if (event_key(evt) !== " ") {
+            keyed = event_key.printable(evt) ? now_msec() : 0;
+        }
     }
     $(ctl).on("change blur", change).on("keyup", keyup).on("keypress", keypress);
 }
@@ -12622,7 +13234,7 @@ function prepare_pstags() {
     });
     $f.on("submit", save_pstags);
     $f.closest(".foldc, .foldo").on("foldtoggle", function (evt) {
-        if (!evt.which.open)
+        if (!evt.detail.open)
             return;
         $f.data("everOpened", true);
         $f.find("input").prop("disabled", false);
@@ -12703,22 +13315,17 @@ handle_ui.on("is-tag-index", function () {
     }
 });
 
+const compar_map = {"=": 2, "!=": 5, "<": 1, "<=": 3, ">=": 6, ">": 4};
+
 function evaluate_compar(x, compar, y) {
     if ($.isArray(y)) {
-        var r = y.indexOf(x) >= 0;
+        const r = y.indexOf(x) >= 0;
         return compar === "=" ? r : !r;
     } else if (x === null || y === null) {
         return compar === "!=" ? x !== y : x === y;
-    } else {
-        var compar_map = {"=": 2, "!=": 5, "<": 1, "<=": 3, ">=": 6, ">": 4};
-        compar = compar_map[compar];
-        if (x > y)
-            return (compar & 4) !== 0;
-        else if (x == y)
-            return (compar & 2) !== 0;
-        else
-            return (compar & 1) !== 0;
     }
+    const cbit = x > y ? 4 : (x == y ? 2 : 1);
+    return (compar_map[compar] & cbit) !== 0;
 }
 
 function evaluate_edit_condition(ec, form) {
@@ -12726,69 +13333,81 @@ function evaluate_edit_condition(ec, form) {
         return ec;
     } else if (edit_conditions[ec.type]) {
         return edit_conditions[ec.type](ec, form);
-    } else {
-        throw new Error("unknown edit condition " + ec.type);
     }
+    throw new Error("unknown edit condition " + ec.type);
 }
 
 edit_conditions.and = function (ec, form) {
-    for (var i = 0; i !== ec.child.length; ++i)
-        if (!evaluate_edit_condition(ec.child[i], form))
+    for (const ch of ec.child) {
+        if (!evaluate_edit_condition(ch, form))
             return false;
+    }
     return true;
 };
 edit_conditions.or = function (ec, form) {
-    for (var i = 0; i !== ec.child.length; ++i)
-        if (evaluate_edit_condition(ec.child[i], form))
+    for (const ch of ec.child) {
+        if (evaluate_edit_condition(ch, form))
             return true;
+    }
     return false;
 };
 edit_conditions.not = function (ec, form) {
     return !evaluate_edit_condition(ec.child[0], form);
 };
 edit_conditions.xor = function (ec, form) {
-    var x = false;
-    for (var i = 0; i !== ec.child.length; ++i)
-        if (evaluate_edit_condition(ec.child[i], form))
+    let x = false;
+    for (const ch of ec.child) {
+        if (evaluate_edit_condition(ch, form))
             x = !x;
+    }
     return x;
 };
 edit_conditions.checkbox = function (ec, form) {
-    var e = form.elements[ec.formid];
+    const e = form.elements[ec.formid];
     return e && e.checked;
 };
+function fieldset(form, fsname) {
+    return form.elements[fsname] || form.querySelector(`fieldset[name="${fsname}"]`);
+}
 edit_conditions.checkboxes = function (ec, form) {
-    var vs = ec.values;
+    const vs = ec.values;
     if (vs === false || vs === true || vs == null) {
-        var es = form.elements[ec.formid].querySelectorAll("input:checked");
+        const es = fieldset(form, ec.formid).querySelectorAll("input:checked");
         return (vs === false) === (es.length === 0);
     }
-    for (var i = 0; i !== vs.length; ++i) {
-        if (form.elements[ec.formid + ":" + vs[i]].checked)
+    for (const v of vs) {
+        if (form.elements[ec.formid + ":" + v].checked)
             return true;
     }
     return false;
 };
+edit_conditions.all_checkboxes = function (ec, form) {
+    const es = fieldset(form, ec.formid).querySelectorAll("input[type=checkbox]");
+    for (const e of es) {
+        if (!e.checked)
+            return false;
+    }
+    return true;
+};
 edit_conditions.dropdown = function (ec, form) {
-    var e = form.elements[ec.formid];
+    const e = form.elements[ec.formid];
     return e && e.value ? +e.value : false;
 };
 edit_conditions.text_present = function (ec, form) {
-    var e = form.elements[ec.formid];
+    const e = form.elements[ec.formid];
     return $.trim(e ? e.value : "") !== "";
 };
 edit_conditions.numeric = function (ec, form) {
-    var e = form.elements[ec.formid],
-        v = (e ? e.value : "").trim(), n;
+    const e = form.elements[ec.formid],
+        v = (e ? e.value : "").trim();
+    let n;
     return v !== "" && !isNaN((n = parseFloat(v))) ? n : null;
 };
 edit_conditions.document_count = function (ec, form) {
+    const fs = fieldset(form, ec.fieldset || ec.formid);
     let n = 0;
-    $(form).find(".has-document").each(function () {
-        if (this.getAttribute("data-dtype") != ec.dtype) {
-            return;
-        }
-        const name = this.getAttribute("data-document-name"),
+    for (const dn of fs.querySelectorAll(".has-document")) {
+        const name = dn.getAttribute("data-document-name"),
             removee = form.elements[name + ":delete"];
         if (removee && removee.value) {
             return;
@@ -12803,7 +13422,7 @@ edit_conditions.document_count = function (ec, form) {
         } else if (preve && preve.value) {
             n += 1;
         }
-    });
+    }
     return n;
 };
 edit_conditions.compar = function (ec, form) {
@@ -12841,14 +13460,16 @@ edit_conditions.collaborators = function (ec, form) {
     return ec.match === ($.trim(e ? e.value : "") !== "");
 };
 edit_conditions.pc_conflict = function (ec, form) {
-    let n = 0, elt;
-    for (let i = 0; i !== ec.uids.length; ++i)
-        if ((elt = form.elements["pcconf:" + ec.uids[i]])
+    let n = 0, elt, ge = ec.compar === ">" || ec.compar === ">=";
+    for (const uid of ec.uids) {
+        if ((elt = form.elements["pcconf:" + uid])
             && (elt.type === "checkbox" ? elt.checked : +elt.value > 1)) {
             ++n;
-            if (n > ec.value)
+            if (ge && n > ec.value) {
                 break;
+            }
         }
+    }
     return evaluate_compar(n, ec.compar, ec.value);
 };
 
@@ -12858,7 +13479,9 @@ function run_edit_condition() {
         off = !evaluate_edit_condition(ec, f),
         link = navsidebar.get(this);
     toggleClass(this, "hidden", off);
-    link && toggleClass(link.element, "hidden", off);
+    if (link) {
+        link.element.hidden = off;
+    }
 }
 
 function run_all_edit_conditions() {
@@ -12874,49 +13497,62 @@ function schedule_all_edit_conditions() {
 }
 
 function header_text(hdr) {
-    var x = hdr.firstChild;
+    let x = hdr.firstChild;
     while (x && x.nodeType !== 3) {
-        x = x.nextSibling;
+        if (x.nodeType === 1 && hasClass(x, "field-title")) {
+            x = x.firstChild;
+        } else {
+            x = x.nextSibling;
+        }
     }
     return x ? x.data.trim() : null;
 }
 
 function add_pslitem_header() {
-    var l = this.firstChild, id = this.id, e, xt;
+    let l = this.firstChild, id = this.id, e, xt;
     if (l && l.nodeName === "LABEL") {
         id = id || l.getAttribute("for");
-        if (!id && (e = l.querySelector("input")))
+        if (!id && (e = l.querySelector("input"))) {
             id = e.id;
+        }
     } else {
         l = this.querySelector(".field-title") || this;
     }
     if (!id || !(xt = header_text(l))) {
         return;
     }
-    e = navsidebar.set(this.parentElement, escape_html(xt), "#" + id).element;
-    var ise = hasClass(this, "has-error"),
-        isw = hasClass(this, "has-warning");
-    toggleClass(e.firstChild, "is-diagnostic", ise || isw);
-    toggleClass(e.firstChild, "is-error", ise);
-    toggleClass(e.firstChild, "is-warning", isw);
-    toggleClass(e, "hidden", hasClass(this.parentElement, "hidden"));
+    const sidee = navsidebar.set(this.parentElement, escape_html(xt), "#" + id).element,
+        ise = hasClass(this, "has-error"),
+        isw = hasClass(this, "has-warning"),
+        isun = hasClass(this, "has-urgent-note");
+    toggleClass(sidee.firstChild, "is-diagnostic", ise || isw || isun);
+    toggleClass(sidee.firstChild, "is-error", ise);
+    toggleClass(sidee.firstChild, "is-warning", isw);
+    toggleClass(sidee.firstChild, "is-urgent-note", isun);
+    sidee.hidden = hasClass(this.parentElement, "hidden") || this.parentElement.hidden;
 }
 
 function add_pslitem_pfe() {
     if (hasClass(this, "pf-separator")) {
-        var li = document.createElement("li");
-        li.className = "pslitem pslitem-separator";
-        navsidebar.append_li(li);
-    } else if (hasClass(this.firstChild, "pfehead")) {
-        add_pslitem_header.call(this.firstChild);
+        navsidebar.append_li($e("li", "pslitem pslitem-separator"));
+    } else {
+        let ch = this.firstChild;
+        if (ch.tagName === "LEGEND") {
+            ch = ch.firstChild;
+        }
+        if (hasClass(ch, "pfehead")) {
+            add_pslitem_header.call(ch);
+        }
     }
 }
 
 handle_ui.on("submit.js-submit-paper", function (evt) {
-    var sub = this.elements["status:submit"] || this.elements.submitpaper,
+    const sub = this.elements["status:submit"],
         is_submit = (form_submitter(this, evt) || "update") === "update";
     if (is_submit
-        && sub && sub.type === "checkbox" && !sub.checked
+        && sub
+        && sub.type === "checkbox"
+        && !sub.checked
         && this.hasAttribute("data-submitted")) {
         if (!window.confirm("Are you sure the paper is no longer ready for review?\n\nOnly papers that are ready for review will be considered.")) {
             evt.preventDefault();
@@ -12931,28 +13567,29 @@ handle_ui.on("submit.js-submit-paper", function (evt) {
     }
     this.elements["status:unchanged"] && this.elements["status:unchanged"].remove();
     this.elements["status:changed"] && this.elements["status:changed"].remove();
-    if (is_submit) {
-        const unch = [], ch = [];
-        for (let i = 0; i !== this.elements.length; ++i) {
-            const e = this.elements[i],
-                type = e.type,
-                name = type ? e.name : e[0].name;
-            if (name
-                && !name.startsWith("has_")
-                && (!type
-                    || (!hasClass(e, "ignore-diff")
-                        && !e.disabled
-                        && !input_is_buttonlike(e)))) {
-                (input_differs(e) ? ch : unch).push(name);
-            }
-        }
-        let e = hidden_input("status:unchanged", unch.join(" "));
-        e.className = "ignore-diff";
-        this.appendChild(e);
-        e = hidden_input("status:changed", ch.join(" "));
-        e.className = "ignore-diff";
-        this.appendChild(e);
+    if (!is_submit) {
+        return;
     }
+    const unch = [], ch = [];
+    for (let i = 0; i !== this.elements.length; ++i) {
+        const e = this.elements[i],
+            type = e.type,
+            name = type ? e.name : e[0].name;
+        if (name
+            && !name.startsWith("has_")
+            && (!type
+                || (!hasClass(e, "ignore-diff")
+                    && !e.disabled
+                    && !input_is_buttonlike(e)))) {
+            (input_differs(e) ? ch : unch).push(name);
+        }
+    }
+    let e = hidden_input("status:unchanged", unch.join(" "));
+    e.className = "ignore-diff";
+    this.appendChild(e);
+    e = hidden_input("status:changed", ch.join(" "));
+    e.className = "ignore-diff";
+    this.appendChild(e);
 });
 
 function fieldchange(evt) {
@@ -12962,11 +13599,11 @@ function fieldchange(evt) {
 }
 
 function prepare_autoready_condition(f) {
-    var condition = null,
-        readye = f.elements["status:submit"] || f.elements.submitpaper;
-    if (!readye) {
+    const readye = f.elements["status:submit"];
+    if (!readye || readye.type === "hidden") {
         return;
     }
+    let condition = null;
     if (f.hasAttribute("data-autoready-condition")) {
         condition = JSON.parse(f.getAttribute("data-autoready-condition"));
     }
@@ -12977,28 +13614,22 @@ function prepare_autoready_condition(f) {
             readye.checked = true;
             readye.removeAttribute("data-autoready");
         }
-        let readychecked, e;
-        if (readye.type === "checkbox") {
-            readychecked = readye.checked;
-        } else {
-            readychecked = readye.value !== "" && readye.value !== "0";
-        }
-        e = readye.parentElement.parentElement;
-        toggleClass(e, "hidden", !iscond);
-        toggleClass(e, "is-error", iscond && !readychecked && readye.hasAttribute("data-urgent"));
+        let e = readye.parentElement.parentElement;
+        e.hidden = !iscond;
+        toggleClass(e, "is-error", iscond && !readye.checked && readye.hasAttribute("data-urgent"));
         for (e = e.nextSibling; e && e.tagName === "P"; e = e.nextSibling) {
             if (hasClass(e, "if-unready-required")) {
-                toggleClass(e, "hidden", iscond);
+                e.hidden = iscond;
             } else if (hasClass(e, "if-unready")) {
-                toggleClass(e, "hidden", iscond && readychecked);
+                e.hidden = iscond && readye.checked;
             } else if (hasClass(e, "if-ready")) {
-                toggleClass(e, "hidden", !iscond || !readychecked);
+                e.hidden = !iscond || !readye.checked;
             }
         }
         let t;
         if (f.hasAttribute("data-contacts-only")) {
             t = "Save contacts";
-        } else if (!iscond || !readychecked) {
+        } else if (!iscond || !readye.checked) {
             t = "Save draft";
         } else if (f.hasAttribute("data-submitted")) {
             t = "Save and resubmit";
@@ -13048,13 +13679,13 @@ hotcrp.load_editable_paper = function () {
 };
 
 hotcrp.load_editable_review = function () {
-    var rfehead = $(".rfehead");
+    const rfehead = $(".rfehead");
     rfehead.each(add_pslitem_header);
     if (rfehead.length) {
         $(".pslcard > .pslitem:last-child").addClass("mb-3");
     }
     hotcrp.add_diff_check("#f-review");
-    var k = $("#f-review").hasClass("differs") ? "" : " hidden",
+    const k = $("#f-review").hasClass("differs") ? "" : " hidden",
         h = $(".btn-savereview").first();
     $(".pslcard-nav").append('<div class="review-alert mt-5'.concat(k,
         '"><button class="ui btn-highlight btn-savereview">', h.html(),
@@ -13088,13 +13719,15 @@ hotcrp.load_paper_sidebar = function () {
 
 hotcrp.replace_editable_field = function (field, elt) {
     var pfe = $$(field).closest(".pfe");
-    if (elt.tagName !== "DIV" || !hasClass(elt, "pfe")) {
-        throw new Error("bad DIV");
+    if ((elt.tagName !== "DIV" && elt.tagName !== "FIELDSET")
+        || !hasClass(elt, "pfe")) {
+        throw new Error("bad replacement");
     }
     pfe.className = elt.className;
     pfe.replaceChildren();
-    while (elt.firstChild)
+    while (elt.firstChild) {
         pfe.appendChild(elt.firstChild);
+    }
     add_pslitem_pfe.call(pfe);
 };
 
@@ -13232,7 +13865,7 @@ handle_ui.on("js-delete-user", function () {
         ul.append($e("li", null, "Comments on ", plinks(pids)));
     }
     if (ul.firstChild !== null) {
-        $pu.append($e("p", null, "Deleting this account will also delete:"), ul);
+        $pu.append($e("p", null, "Deleting this account will delete or disable:"), ul);
     }
     $pu.append($e("p", null, "Be careful: Account deletion ", $e("strong", null, "cannot be undone"), "."))
         .append_actions($e("button", {type: "submit", name: "delete", value: 1, class: "btn-danger"}, "Delete user"), "Cancel")
@@ -13389,7 +14022,7 @@ handle_ui.on("js-edit-formulas", function () {
         if (f.editable) {
             nei.className = "mb-1";
             nei.append($e("input", {type: "text", id: "k-formula/" + count + "/name", class: "editformulas-name need-autogrow", name: "formula/" + count + "/name", size: 30, value: f.name, placeholder: "Formula name"}),
-                $e("button", {type: "button", class: "ml-2 delete-link need-tooltip btn-licon-s", "aria-label": "Delete formula"}, svge_use_licon("trash")));
+                $e("button", {type: "button", class: "ml-2 delete-link need-tooltip btn-licon-s", "aria-label": "Delete formula"}, $svg_use_licon("trash")));
             xei.append($e("textarea", {class: "editformulas-expression need-autogrow w-99", id: "k-formula/" + count + "/expression", name: "formula/" + count + "/expression", rows: 1, cols: 64, placeholder: "Formula definition"}, f.expression));
         } else {
             nei.append(f.name);
@@ -13693,7 +14326,7 @@ handle_ui.on("js-named-search", function (evt) {
 
 handle_ui.on("foldtoggle.js-named-search-tabpanel", function (evt) {
     const self = this;
-    if (!evt.which.open) {
+    if (!evt.detail.open) {
         return;
     }
     removeClass(this, "js-named-search-tabpanel");
@@ -13719,7 +14352,7 @@ handle_ui.on("js-select-all", function () {
 });
 
 handle_ui.on("js-tag-list-action", function (evt) {
-    if (evt.type === "foldtoggle" && !evt.which.open)
+    if (evt.type === "foldtoggle" && !evt.detail.open)
         return;
     removeClass(this, "js-tag-list-action");
     $("select.js-submit-action-info-tag").on("change", function () {
@@ -13734,8 +14367,9 @@ handle_ui.on("js-tag-list-action", function (evt) {
 });
 
 handle_ui.on("js-assign-list-action", function (evt) {
-    if (evt.type === "foldtoggle" && !evt.which.open)
+    if (evt.type === "foldtoggle" && !evt.detail.open) {
         return;
+    }
     var self = this;
     removeClass(self, "js-assign-list-action");
     $(self).find("select[name=markpc]").each(populate_pcselector);
@@ -13756,72 +14390,73 @@ handle_ui.on("js-assign-list-action", function (evt) {
     });
 });
 
+(function () {
+
 function handle_list_submit_bulkwarn(table, chkval, bgform, evt) {
-    var chki = table.querySelectorAll("tr.pl[data-bulkwarn]"), i, n = 0;
-    for (i = 0; i !== chki.length && n < 4; ++i) {
+    const chki = table.querySelectorAll("tr.pl[data-bulkwarn]");
+    let n = 0;
+    for (let i = 0; i !== chki.length && n < 4; ++i) {
         if (chkval.indexOf(chki[i].getAttribute("data-pid")) >= 0)
             ++n;
     }
-    if (n >= 4) {
-        const ctr = $e("div", "container"),
-            $pu = $popup({near: evt.target}).append(ctr)
-                .append_actions($e("button", {type: "button", name: "bsubmit", class: "btn-primary"}, "Download"), "Cancel");
-        let m = table.getAttribute("data-bulkwarn-ftext");
-        if (m === null || m === "") {
-            m = "<5><p>Some program committees discourage reviewers from downloading " + siteinfo.snouns[1] + " in bulk. Are you sure you want to continue?</p>";
-        }
-        render_text.onto(ctr, "f", m);
-        $pu.on("closedialog", function () {
-            bgform && document.body.removeChild(bgform);
-        });
-        $pu.show().on("click", "button[name=bsubmit]", function () {
-            bgform.submit();
-            bgform = null;
-            $pu.close();
-        });
-        return false;
-    } else
+    if (n < 4) {
         return true;
+    }
+    const ctr = $e("div", "container"),
+        $pu = $popup({near: evt.target}).append(ctr)
+            .append_actions($e("button", {type: "button", name: "bsubmit", class: "btn-primary"}, "Download"), "Cancel");
+    let m = table.getAttribute("data-bulkwarn-ftext");
+    if (m === null || m === "") {
+        m = "<5><p>Some program committees discourage reviewers from downloading " + siteinfo.snouns[1] + " in bulk. Are you sure you want to continue?</p>";
+    }
+    render_text.onto(ctr, "f", m);
+    $pu.on("closedialog", function () {
+        if (bgform) {
+            document.body.removeChild(bgform);
+        }
+    });
+    $pu.show().on("click", "button[name=bsubmit]", function () {
+        bgform.submit();
+        bgform = null;
+        $pu.close();
+    });
+    return false;
 }
 
-function handle_list_submit_get(bgform) {
-    if (bgform.action.indexOf("?") >= 0)
+function allow_list_submit_get(bgform) {
+    if (bgform.action.indexOf("?") >= 0) {
         return false;
-    const vs = [];
-    for (let e = bgform.firstChild; e; e = e.nextSibling) {
-        if (e.type === "file")
-            return false;
-        vs.push(urlencode(e.name) + "=" + urlencode(e.value));
     }
-    const url = bgform.action + "?" + vs.join("&");
-    if (url.length >= 2800)
-        return false;
-    if (bgform.target === "_blank")
-        window.open(url, "_blank", "noopener");
-    else
-        window.location = url;
-    return true;
+    const p = new URLSearchParams;
+    for (let e = bgform.firstChild; e; e = e.nextSibling) {
+        if (e.type === "file") {
+            return false;
+        }
+        p.set(e.name, e.value);
+    }
+    const url = bgform.action + "?" + p.toString();
+    return url.length < 7000;
 }
 
 handle_ui.on("js-submit-list", function (evt) {
     evt.preventDefault();
 
     // choose action
-    var form = this, fn = "", fnbutton, e, ne, i, es;
+    let form = this, fn = "", fnbutton, e;
     if (this instanceof HTMLButtonElement) {
-        fn = this.value;
         fnbutton = this;
+        fn = this.value;
         form = this.form;
     } else if ((e = form.elements.defaultfn) && e.value) {
         fn = e.value;
-        es = form.elements.fn;
-        for (i = 0; es && i !== es.length; ++i) {
+        const es = form.elements.fn;
+        for (let i = 0; es && i !== es.length; ++i) {
             if (es[i].value === fn)
                 fnbutton = es[i];
         }
     } else if (document.activeElement
                && (e = document.activeElement.closest(".pl-footer-part"))) {
-        es = e.querySelectorAll(".js-submit-list");
+        const es = e.querySelectorAll(".js-submit-list");
         if (es && es.length === 1) {
             fn = es[0].value;
             fnbutton = es[0];
@@ -13836,13 +14471,12 @@ handle_ui.on("js-submit-list", function (evt) {
 
     // find selected
     const table = (fnbutton && fnbutton.closest(".pltable")) || form;
-    es = table.querySelectorAll("input.js-selector");
     // Keep track of both string versions and numeric versions
     // (numeric versions for possible session list encoding).
     const allval = [];
     let allnumval = [], chkval = [], chknumval = [], isdefault = false;
-    for (i = 0; i !== es.length; ++i) {
-        const v = es[i].value, checked = es[i].checked;
+    for (e of table.querySelectorAll("input.js-selector")) {
+        const v = e.value, checked = e.checked;
         allval.push(v);
         checked && chkval.push(v);
         if (allnumval && ((v | 0) != v || v.startsWith("0"))) {
@@ -13872,6 +14506,7 @@ handle_ui.on("js-submit-list", function (evt) {
         : chkval.join(" ");
 
     // remove old background forms
+    let ne;
     for (e = document.body.firstChild; e; e = ne) {
         ne = e.nextSibling;
         if (e.className === "is-background-form")
@@ -13897,59 +14532,65 @@ handle_ui.on("js-submit-list", function (evt) {
     document.body.appendChild(bgform);
 
     // set list function (`fn`)
-    if (!bgform.elements.fn)
+    if (!bgform.elements.fn) {
         bgform.appendChild(hidden_input("fn", ""));
+    }
     bgform.elements.fn.value = fn;
 
     // set papers
-    if (chktxt)
+    if (chktxt) {
         bgform.appendChild(hidden_input("p", chktxt));
-    if (isdefault)
+    }
+    if (isdefault) {
         bgform.appendChild(hidden_input("pdefault", "yes"));
-    if (form.elements.forceShow && form.elements.forceShow.value !== "")
+    }
+    if (form.elements.forceShow && form.elements.forceShow.value !== "") {
         bgform.appendChild(hidden_input("forceShow", form.elements.forceShow.value));
+    }
 
     // transfer other form elements
     if (fnbutton && (e = fnbutton.closest(".pl-footer-part"))) {
-        es = e.querySelectorAll("input, select, textarea");
-        for (i = 0; i !== es.length; ++i) {
-            if (input_successful(es[i])) {
-                if (es[i].type === "file") {
-                    e = document.createElement("input");
-                    e.setAttribute("type", "file");
-                    e.setAttribute("name", es[i].name);
-                    bgform.appendChild(e);
-                    e.files = es[i].files;
-                } else {
-                    bgform.appendChild(hidden_input(es[i].name, es[i].value));
-                }
-                if (es[i].hasAttribute("data-bulkwarn")
-                    || (es[i].tagName === "SELECT"
-                        && es[i].selectedIndex >= 0
-                        && es[i].options[es[i].selectedIndex].hasAttribute("data-bulkwarn")))
-                    need_bulkwarn = true;
+        for (const ex of e.querySelectorAll("input, select, textarea")) {
+            if (!input_successful(ex)) {
+                continue;
+            }
+            if (ex.type === "file") {
+                const ef = document.createElement("input");
+                ef.setAttribute("type", "file");
+                ef.setAttribute("name", ex.name);
+                bgform.appendChild(ef);
+                ef.files = ex.files;
+            } else {
+                bgform.appendChild(hidden_input(ex.name, ex.value));
+            }
+            if (ex.hasAttribute("data-bulkwarn")
+                || (ex.tagName === "SELECT"
+                    && ex.selectedIndex >= 0
+                    && ex.options[ex.selectedIndex].hasAttribute("data-bulkwarn"))) {
+                need_bulkwarn = true;
             }
         }
     }
 
     // maybe remove subfunction (e.g. `getfn`)
-    if ((i = fn.indexOf("/")) > 0) {
-        const supfn = fn.substring(0, i),
+    const slash = fn.indexOf("/");
+    if (slash > 0) {
+        const supfn = fn.substring(0, slash),
             subfne = bgform.elements[supfn + "fn"];
-        if (subfne && subfne.value === fn.substring(i + 1))
+        if (subfne && subfne.value === fn.substring(slash + 1)) {
             subfne.remove();
+        }
     }
 
-    // check bulk-download warning (need string versions of ids)
-    if (need_bulkwarn && !handle_list_submit_bulkwarn(table, chkval, bgform, evt))
-        return;
-
-    // either set location or submit form
-    if (bgform.method !== "get" || !handle_list_submit_get(bgform)) {
+    // maybe adjust form method
+    if (bgform.method === "get" && !allow_list_submit_get(bgform)) {
+        bgform.action = hoturl_search(bgform.action, ":method:", "GET");
         bgform.method = "post";
+    }
+    if (bgform.method !== "get") {
+        let action = bgform.action;
         bgform.enctype = "multipart/form-data";
         bgform.acceptCharset = "UTF-8";
-        action = bgform.action;
         if (bgform.elements.fn) {
             action = hoturl_search(action, "fn", bgform.elements.fn.value);
             bgform.elements.fn.remove();
@@ -13959,18 +14600,104 @@ handle_ui.on("js-submit-list", function (evt) {
             bgform.elements.p.remove();
         }
         bgform.action = action;
-        bgform.submit();
     }
+
+    // check bulk-download warning (need string versions of ids)
+    if (need_bulkwarn
+        && !handle_list_submit_bulkwarn(table, chkval, bgform, evt)) {
+        return;
+    }
+
+    bgform.submit();
+});
+
+})();
+
+handle_ui.on("js-selector-summary", function () {
+    if (this.elements["pap[]"]) {
+        return;
+    }
+    if (this.elements.pap) {
+        this.elements.pap.remove();
+    }
+    const chkval = [];
+    let any = false, chknumval = [];
+    for (const e of this.querySelectorAll("input.js-selector")) {
+        any = true;
+        if (e.checked) {
+            const v = e.value;
+            chkval.push(v);
+            if (chknumval && ((v | 0) != v || v.startsWith("0"))) {
+                chknumval = null;
+            }
+            if (chknumval) {
+                chknumval.push(v | 0);
+            }
+        }
+    }
+    if (any && !chkval.length) {
+        alert("Nothing selected.");
+        return;
+    }
+    const chktxt = chknumval && chknumval.length > 30
+        ? encode_session_list_ids(chknumval)
+        : chkval.join(" ");
+    this.appendChild(hidden_input("pap", chktxt));
 });
 
 
 handle_ui.on("foldtoggle.js-unfold-pcselector", function (evt) {
-    if (evt.which.open) {
+    if (evt.detail.open) {
         removeClass(this, "js-unfold-pcselector");
         $(this).find("select[data-pcselector-options]").each(populate_pcselector);
     }
 });
 
+
+handle_ui.on("js-assign-potential-conflict", function () {
+    const self = this, pid = +this.getAttribute("data-pid"), ass = {
+        type: "conflict", pid: pid, uid: +this.getAttribute("data-uid"),
+        conflict: this.getAttribute("data-conflict-type") || "pinned conflicted"
+    };
+    function success(rv) {
+        if (!rv || !rv.ok || rv.valid === false) {
+            return;
+        }
+        const div = self.closest(".msg-inform"), f = self.form,
+            is_none = /unconflicted|none/.test(ass.conflict);
+        if (!div) {
+            return;
+        }
+        if (!is_none) {
+            for (const e of f.querySelectorAll(".assignment-summary")) {
+                e.hidden = true;
+            }
+            for (const e of f.querySelectorAll(".if-assign-potential-conflict")) {
+                e.hidden = false;
+            }
+            const submit = f.elements.submit, reassign = f.elements.reassign;
+            if (submit) {
+                submit.disabled = true;
+                submit.hidden = true;
+            }
+            if (reassign) {
+                reassign.hidden = false;
+            }
+        }
+        div.replaceChildren($e("div", "is-diagnostic is-success",
+            is_none ? "Conflict ignored" : "Conflict confirmed"));
+    }
+    $ajax.condition(function () {
+        $.ajax(hoturl("=api/assign", {p: pid}), {
+            method: "POST", data: {assignments: JSON.stringify([ass])},
+            success: success, trackOutstanding: true
+        });
+    });
+});
+
+hotcrp.tooltip.add_builder("cflt", function (info) {
+    return Object.assign({anchor: "s"}, info);
+});
 
 handle_ui.on("js-assign-review", function (evt) {
     var form = this.form, m;
@@ -14041,10 +14768,25 @@ function populate_pcselector() {
 
     demand_load.pc_map().then(function (pcs) {
         const last_first = pcs.sort === "last", used = {};
-        let selindex = -1, noptions = 0;
+        let selindex = -1, noptions = 0, lastgroup = self;
 
         for (const opt of options) {
-            let want, mygroup = self;
+            // close current group
+            if ((opt === "selected" || opt === "extrev" || opt.endsWith(":"))
+                && lastgroup !== self) {
+                if (lastgroup.firstChild) {
+                    self.append(lastgroup);
+                }
+                lastgroup = self;
+            }
+            // open new group
+            if (opt.endsWith(":")) {
+                lastgroup = document.createElement("optgroup");
+                lastgroup.setAttribute("label", opt.substring(0, opt.length - 1));
+                continue;
+            }
+            // enumerate members
+            let want, mygroup = lastgroup;
             if (opt === "" || opt === "*") {
                 want = pcs.pc_uids;
             } else if (opt === "assignable") {
@@ -14058,9 +14800,12 @@ function populate_pcselector() {
                 for (const u of pcs.p[siteinfo.paperid].extrev || []) {
                     want.push(u.uid);
                 }
+            } else if (opt.startsWith("#")) {
+                want = [opt];
             } else {
                 want = [+opt || 0];
             }
+            // apply members
             for (const uid of want) {
                 if (used[uid]) {
                     continue;
@@ -14081,6 +14826,8 @@ function populate_pcselector() {
                     } else {
                         name = opt;
                     }
+                } else if (opt.startsWith("#")) {
+                    name = email = opt;
                 } else {
                     continue;
                 }
@@ -14094,9 +14841,12 @@ function populate_pcselector() {
                 }
                 ++noptions;
             }
-            if (mygroup !== self && mygroup.firstChild) {
+            if (mygroup !== lastgroup && mygroup.firstChild) {
                 self.appendChild(mygroup);
             }
+        }
+        if (lastgroup !== self && lastgroup.firstChild) {
+            self.appendChild(lastgroup);
         }
 
         if (selindex < 0) {
@@ -14343,7 +15093,7 @@ return function (j) {
 
 // home activity
 (function ($) {
-var events = null, events_at = 0, events_more = null;
+let events = null, events_at = 0, events_more = null;
 
 function load_more_events() {
     $.ajax(hoturl("api/events", (events_at ? {from: events_at} : null)), {
@@ -14363,7 +15113,7 @@ function render_events(e, rows) {
     let tb = e.querySelector("tbody");
     if (!tb) {
         tb = $e("tbody", "pltable-tbody");
-        let button = $e("button", {type: "button"}, "More");
+        const button = $e("button", {type: "button"}, "More");
         e.append($e("div", "eventtable", $e("table", "pltable", tb)),
             $e("div", "g eventtable-more", button));
         $(button).on("click", load_more_events);
@@ -14372,7 +15122,7 @@ function render_events(e, rows) {
         $(tb).append(rows[i]);
     }
     if (events_more === false) {
-        $(e).find(".eventtable-more").addClass("hidden");
+        e.querySelector(".eventtable-more").hidden = true;
         if (!events.length) {
             tb.append($e("tr", null, $e("td", null, "No recent activity in papers you’re following")));
         }
@@ -14380,9 +15130,8 @@ function render_events(e, rows) {
 }
 
 handle_ui.on("js-open-activity", function (evt) {
-    if (evt.which.open) {
+    if (evt.detail.open) {
         removeClass(this, "js-open-activity");
-        this.append($e("div", "fx20 has-events"));
         events ? render_events(this, events) : load_more_events();
     }
 });
@@ -14583,10 +15332,15 @@ $(function () {
         return p.join(">");
     }
     var err = [], elt = [];
-    $(".xinfo,.xconfirm,.xwarning,.xmerror,.aa,.strong,td.textarea,a.btn[href=''],.p,.mg,.editor").each(function () {
+    let e = document.querySelector(".js-selector");
+    if (e && e.form && (!hasClass(e.form, "ui-submit") || (!hasClass(e.form, "js-selector-summary") && !hasClass(e.form, "js-submit-list")))) {
+        err.push(locator(e.form) + ": no .js-selector-summary");
+        elt.push(e.form);
+    }
+    /*$(".xinfo,.xconfirm,.xwarning,.xmerror,.aa,.strong,td.textarea,a.btn[href=''],.p,.mg,.editor").each(function () {
         err.push(locator(this));
         elt.push(this);
-    });
+    });*/
     if (document.documentMode || window.attachEvent) {
         var msg = $('<div class="msg msg-error"></div>').appendTo("#h-messages");
         feedback.append_item_near(msg[0], {message: "<0>This site no longer supports Internet Explorer", status: 2});
@@ -14661,7 +15415,6 @@ Object.assign(window.hotcrp, {
     // set_scoresort
     // shortcut
     // suggest
-    svge: svge,
     // text
     // tooltip
     // tracker_show_elapsed

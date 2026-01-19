@@ -88,8 +88,7 @@ class MentionLister {
             }
             if ($rrow->reviewOrdinal
                 && $user->can_view_review($prow, $rrow)) {
-                $au = new Author;
-                $au->lastName = "Reviewer " . unparse_latin_ordinal($rrow->reviewOrdinal);
+                $au = Author::make_last("Reviewer " . unparse_latin_ordinal($rrow->reviewOrdinal));
                 $au->contactId = $rrow->contactId;
                 $au->status = Author::STATUS_ANONYMOUS_REVIEWER;
                 $rlist[] = $au;
@@ -109,12 +108,11 @@ class MentionLister {
     /** @param PaperInfo $prow
      * @param Contact $user */
     private function add_shepherd($prow, $user) {
-        $au = new Author;
-        $au->lastName = "Shepherd";
+        $au = Author::make_last("Shepherd");
         $au->contactId = $prow->shepherdContactId;
         $au->status = Author::STATUS_ANONYMOUS_REVIEWER;
         $this->lists["reviewers"][] = $au;
-        if (!in_array($prow->shepherdContactId, $this->rcids)
+        if (!in_array($prow->shepherdContactId, $this->rcids, true)
             && $user->can_view_shepherd($prow)
             && ($shepherd = $user->conf->user_by_id($prow->shepherdContactId, USER_SLICE))
             && !$shepherd->is_dormant()) {
@@ -128,7 +126,7 @@ class MentionLister {
      * @param int $cvis */
     private function add_commenters($prow, $user, $cvis) {
         foreach ($prow->viewable_comment_skeletons($user) as $crow) {
-            if (!in_array($crow->contactId, $this->rcids)
+            if (!in_array($crow->contactId, $this->rcids, true)
                 && $user->can_view_comment_identity($prow, $crow)
                 && ($commenter = $crow->commenter())
                 && !$commenter->is_dormant()) {
@@ -163,13 +161,15 @@ class MentionLister {
                 $x = [$skey => $n];
                 if ($isau) {
                     $x["au"] = true;
-                    if (in_array($n, $aunames)) { // duplicate contact names are common
+                    if (in_array($n, $aunames, true)) { // duplicate contact names are common
                         continue;
                     }
                     $aunames[] = $n;
                 }
                 if (!$ispc) {
                     $x["pri"] = 1;
+                } else if ($prow ? $au->can_administer($prow) : $au->privChair) {
+                    $x["admin"] = true;
                 }
                 $comp[] = $x;
             }

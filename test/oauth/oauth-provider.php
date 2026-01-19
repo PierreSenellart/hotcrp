@@ -77,6 +77,8 @@ class UserEntity implements UserEntityInterface {
     public $name;
     public $orcid;
     public $affiliation;
+    public $groups;
+    public $roles;
 
     function __construct($x = null) {
         $x = $x ?? (object) ["email" => null];
@@ -87,6 +89,8 @@ class UserEntity implements UserEntityInterface {
         $this->name = $x->name ?? null;
         $this->orcid = $x->orcid ?? null;
         $this->affiliation = $x->affiliation ?? null;
+        $this->groups = $x->groups ?? null;
+        $this->roles = $x->roles ?? null;
     }
     public function getIdentifier() {
         return $this->email;
@@ -193,7 +197,11 @@ class My implements ClientRepositoryInterface, AuthCodeRepositoryInterface, Acce
 
     static function load_main() {
         self::$main = new My;
-        $db = json_decode(file_get_contents(__DIR__ . "/db.json"));
+        if (file_exists(__DIR__ . "/localdb.json")) {
+            $db = json_decode(file_get_contents(__DIR__ . "/localdb.json"));
+        } else {
+            $db = json_decode(file_get_contents(__DIR__ . "/db.json"));
+        }
         foreach ($db->users ?? [] as $u) {
             self::$main->users[] = new UserEntity($u);
         }
@@ -290,7 +298,7 @@ class IdentityBearerTokenResponse extends BearerTokenResponse {
             "exp" => $at->getExpiryDateTime()->getTimestamp()
         ];
         if (($u = $this->my->user_by_email($at->getUserIdentifier()))) {
-            foreach (["email", "email_verified", "name", "given_name", "family_name", "orcid", "affiliation"] as $k) {
+            foreach (["email", "email_verified", "name", "given_name", "family_name", "orcid", "affiliation", "groups", "roles"] as $k) {
                 if (isset($u->$k))
                     $idt[$k] = $u->$k;
             }
@@ -342,10 +350,14 @@ function get_cookie(ServerRequestInterface $req) {
     return null;
 }
 
+function http_date($t) {
+    return gmdate("D, d M Y H:i:s", $t) . " GMT";
+}
+
 function ensure_cookie(ServerRequestInterface $req, Response $res) {
     $value = bin2hex(random_bytes(16));
-    $exp = gmdate("D, d M Y H:i:s", time() + 86400 * 366);
-    return $res->withHeader("Set-Cookie", COOKIE_NAME . "={$value}; Expires={$exp} GMT; HttpOnly; SameSite=Lax");
+    $exp = http_date(time() + 86400 * 366);
+    return $res->withHeader("Set-Cookie", COOKIE_NAME . "={$value}; Expires={$exp}; HttpOnly; SameSite=Lax");
 }
 
 function redirection(Response $res, $redirectUri, $param) {

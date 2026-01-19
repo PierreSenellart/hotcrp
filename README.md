@@ -3,10 +3,10 @@ HotCRP Conference Review Software [![Build Status](https://github.com/kohler/hot
 
 HotCRP is awesome software for managing review processes, especially for
 academic conferences. It supports paper submission, review and comment
-management, rebuttals, and the PC meeting. Its main strengths are flexibility
-and ease of use in the review process, especially through smart paper search
-and tagging. It has been widely used in computer science conferences and for
-internal review processes at several large companies.
+management, rebuttals, and PC meetings. Its main strengths are flexibility and
+ease of use for reviewers, especially through smart paper search and tagging. It
+has been widely used in computer science conferences and for internal review
+processes at several large companies.
 
 HotCRP is the open-source version of the software running on
 [hotcrp.com](https://hotcrp.com). If you want to run HotCRP without setting
@@ -41,8 +41,8 @@ software:
 * Poppler’s version of pdftohtml, https://poppler.freedesktop.org/ (only
   required for format checking)
 
-You may need to install additional packages, such as php82, php82-fpm,
-php82-intl, php82-mysqlnd, zip, poppler-utils, and sendmail or postfix.
+You may need to install additional packages, such as php84, php84-fpm,
+php84-intl, php84-mysqlnd, zip, poppler-utils, and sendmail or postfix.
 
 
 Installation
@@ -122,8 +122,8 @@ Installation
 4. Update PHP settings.
 
    The first three settings, `upload_max_filesize`, `post_max_size`, and
-  `max_input_vars`, may be changed system-wide or in HotCRP’s `.htaccess` and
-  `.user.ini` files.
+   `max_input_vars`, may be changed system-wide or in HotCRP’s `.htaccess` and
+   `.user.ini` files.
 
    * `upload_max_filesize`: Set to the largest file upload HotCRP should accept.
      `15M` is a good default.
@@ -134,13 +134,15 @@ Installation
    * `max_input_vars`: Set to the largest number of distinct input variables
      HotCRP should accept. `4096` is a good default.
 
-  The last setting, `session.gc_maxlifetime`, must be changed globally. This
-  provides an upper bound on HotCRP session lifetimes (the amount of idle time
-  before a user is logged out automatically). On Unix machines, systemwide PHP
-  settings are often stored in `/etc/php.ini`. The suggested value for this
-  setting is 86400, e.g., 24 hours:
+   The last setting, `session.gc_maxlifetime`, must be changed globally. This
+   provides an upper bound on HotCRP session lifetimes (the amount of idle time
+   before a user is logged out automatically). On Unix machines, systemwide PHP
+   settings are often stored in `/etc/php.ini`. The suggested value for this
+   setting is 86400, e.g., 24 hours:
 
-        session.gc_maxlifetime = 86400
+   ```
+   session.gc_maxlifetime = 86400
+   ```
 
    If you want sessions to expire sooner, we recommend you set
    `session.gc_maxlifetime` to 86400 anyway, then edit `conf/options.php` to set
@@ -167,19 +169,14 @@ Installation
 
 You can set up everything else through the web site itself.
 
-* Configuration notes
+Configuration notes:
 
-  - Uploaded papers and reviews are limited in size by several PHP
-    configuration variables, set by default to 15 megabytes in the HotCRP
-    directory’s `.user.ini` (or `.htaccess` if using Apache).
+- HotCRP PHP scripts can take a lot of memory. By default HotCRP sets the
+  PHP memory limit to 128MB.
 
-  - HotCRP PHP scripts can take a lot of memory. By default HotCRP sets the
-    PHP memory limit to 128MB.
-
-  - Most HotCRP settings are assigned in the conference database’s
-    Settings table. The Settings table can also override values in
-    `conf/options.php`: a Settings record with name `opt.XXX` takes
-    precedence over option `$Opt["XXX"]`.
+- Most HotCRP settings are assigned in the conference database’s Settings table.
+  The Settings table can also override values in `conf/options.php`: a Settings
+  record with name `opt.XXX` takes precedence over option `$Opt["XXX"]`.
 
 
 Database access

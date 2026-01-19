@@ -49,34 +49,43 @@ class UnicodeHelper {
         }
     }
 
-    /** @param string $x
-     * @return string */
-    static function deaccent($x) {
-        if (preg_match_all("/[\xC0-\xFF]/", $x, $m, PREG_OFFSET_CAPTURE)) {
-            if (self::$deaccent_map === null) {
-                self::make_deaccent_map();
-            }
-            $first = 0;
-            $out = "";
-            foreach ($m[0] as $mx) {
-                $i = $mx[1];
-                $l = ord($mx[0]) < 0xE0 ? 2 : 3;
-                $ch = substr($x, $i, $l);
-                if (($di = self::$deaccent_map[$ch] ?? null) !== null) {
-                    $out .= substr($x, $first, $i - $first) . self::deaccent_result($di);
-                    $first = $i + $l;
-                }
-            }
-            $x = $out . substr($x, $first);
+    /** @param string $s
+     * @return ?string */
+    static function maybe_deaccent($s) {
+        if (!preg_match_all("/[\xC0-\xFF]/", $s, $m, PREG_OFFSET_CAPTURE)) {
+            return null;
         }
-        return $x;
+        if (self::$deaccent_map === null) {
+            self::make_deaccent_map();
+        }
+        $first = 0;
+        $out = "";
+        foreach ($m[0] as $mx) {
+            $i = $mx[1];
+            $l = ord($mx[0]) < 0xE0 ? 2 : 3;
+            $ch = substr($s, $i, $l);
+            if (($di = self::$deaccent_map[$ch] ?? null) !== null) {
+                $out .= substr($s, $first, $i - $first) . self::deaccent_result($di);
+                $first = $i + $l;
+            }
+        }
+        if ($first === 0) {
+            return null;
+        }
+        return $out . substr($s, $first);
     }
 
-    /** @param string $x
+    /** @param string $s
+     * @return string */
+    static function deaccent($s) {
+        return self::maybe_deaccent($s) ?? $s;
+    }
+
+    /** @param string $s
      * @return array{string,list<int>} */
-    static function deaccent_offsets($x) {
+    static function deaccent_offsets($s) {
         $offsetmap = [0, 0];
-        if (preg_match_all("/[\xC0-\xFF]/", $x, $m, PREG_OFFSET_CAPTURE)) {
+        if (preg_match_all("/[\xC0-\xFF]/", $s, $m, PREG_OFFSET_CAPTURE)) {
             if (self::$deaccent_map === null) {
                 self::make_deaccent_map();
             }
@@ -85,17 +94,17 @@ class UnicodeHelper {
             foreach ($m[0] as $mx) {
                 $i = $mx[1];
                 $l = ord($mx[0]) < 0xE0 ? 2 : 3;
-                $ch = substr($x, $i, $l);
+                $ch = substr($s, $i, $l);
                 if (($di = self::$deaccent_map[$ch] ?? null) !== null) {
-                    $out .= substr($x, $first, $i - $first) . self::deaccent_result($di);
+                    $out .= substr($s, $first, $i - $first) . self::deaccent_result($di);
                     $first = $i + $l;
                     $offsetmap[] = strlen($out);
                     $offsetmap[] = $first;
                 }
             }
-            $x = $out . substr($x, $first);
+            $s = $out . substr($s, $first);
         }
-        return [$x, $offsetmap];
+        return [$s, $offsetmap];
     }
 
     /** @param list<int> $offsetmap
@@ -155,9 +164,8 @@ class UnicodeHelper {
         } else if ($pos + 3 >= $len
                    || (ord($str[$pos + 3]) & 0xC0) !== 0x80) {
             return "";
-        } else {
-            return substr($str, $pos, 4);
         }
+        return substr($str, $pos, 4);
     }
 
     /** @param string $str
@@ -181,18 +189,22 @@ class UnicodeHelper {
             return -1;
         } else if ($ch < 0xE0) {
             return (($ch & 0x1F) << 6) | ($ch1 & 0x3F);
-        } else if ($pos + 2 >= $len
-                   || (($ch2 = ord($str[$pos + 2])) & 0xC0) !== 0x80) {
+        } else if ($pos + 2 >= $len) {
+            return -1;
+        }
+        $ch2 = ord($str[$pos + 2]);
+        if (($ch2 & 0xC0) !== 0x80) {
             return -1;
         } else if ($ch < 0xF0) {
             return (($ch & 0x0F) << 12) | (($ch1 & 0x3F) << 6) | ($ch2 & 0x3F);
-        } else if ($pos + 3 >= $len
-                   || (($ch3 = ord($str[$pos + 3])) & 0xC0) !== 0x80) {
+        } else if ($pos + 3 >= $len) {
             return -1;
-        } else {
-            return (($ch & 0x07) << 18) | (($ch1 & 0x3F) << 12)
-                | (($ch2 & 0x3F) << 6) | ($ch3 & 0x3F);
         }
+        $ch3 = ord($str[$pos + 3]);
+        if (($ch3 & 0xC0) !== 0x80) {
+            return -1;
+        }
+        return (($ch & 0x07) << 18) | (($ch1 & 0x3F) << 12) | (($ch2 & 0x3F) << 6) | ($ch3 & 0x3F);
     }
 
     /** @param int $ch
@@ -203,9 +215,8 @@ class UnicodeHelper {
         } else if ($ch >= 0x10000 && $ch <= 0x10FFFF) {
             $ch -= 0x10000;
             return [0xD800 | ($ch >> 10), 0xDC00 | ($ch & 0x3FF)];
-        } else {
-            return [];
         }
+        return [];
     }
 
     /** @param int $ch
