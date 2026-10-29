@@ -1,26 +1,42 @@
 # Search
 
-These endpoints perform searches on submissions.
+These endpoints run submission **searches** and manage the machinery around
+them: saved (named) searches, the display options that control how a result list
+is shown, search-box completions, formula graphs, and bulk **search actions**.
+
+A search is written as a HotCRP **search string**—the same syntax as the web
+search box—in the `q` parameter, and runs against a **collection** of submissions
+named by `t`. [`/search`](#get-search) returns the matching submission IDs and,
+optionally, display fields; it is the backbone of every paper list, and several
+other endpoints (here and in other sections) accept the same search parameters to
+act on a search result.
+
+These shared search parameters are:
+
+- `q`—the search string.
+- `t`—the search *scope*, which is the collection of submissions to search.
+  `t=viewable`, the broadest, checks every submission the caller can view; `t=s`
+  is complete submissions. If `t` is omitted, HotCRP picks a default from the
+  caller’s roles and the site configuration (typically `t=s` for PC members and
+  chairs).
+- `qt`—default fields to search for query terms that do not name a field, such as
+  `ti` (title) or `au` (authors).
+- `sort`—the result sort order, such as `id` or `-title`.
+- `scoresort`—the sort order for review-score fields, such as `average` or
+  `counts`.
+- `reviewer`—the reviewer (email or ID) whose viewpoint evaluates
+  reviewer-relative search terms such as `myreview`.
 
 
 # get /search
 
-> Fetch search results
+> Retrieve search results
 
 Return IDs, and optionally other display fields, of submissions that match a
-search.
+search. The matching submission IDs are returned in the `ids` response field,
+ordered according to the search.
 
-The `q` parameter defines the search. The list of matching submission IDs is
-returned in the `ids` response property, ordered according to the search.
-
-The `t`, `qt`, `reviewer`, `sort`, and `scoresort` parameters can modify the
-search. `t` defines the collection of searched submissions. `t=viewable` is the
-broadest; it checks all submissions the user can view. If `t` is not provided,
-HotCRP picks a default based on the user’s roles and the site’s current
-configuration. For PC members and chairs, the typical default is `t=s`, which
-searches complete submissions.
-
-### Display fields
+## Display fields
 
 The `f` and `format` parameters retrieve display fields for each submission in
 the search result.
@@ -30,14 +46,14 @@ which requests two fields: `title`, and `authors` with the `full` view option.
 The `/displayfields` API lists available display fields. `format` is either
 `csv` or `html`, and requests CSV or HTML format for the response data.
 
-The response will contain `fields` and `papers` properties. `fields` is an array
+The response will contain two fields, `fields` and `papers`. `fields` is an array
 of objects defining the emitted display fields. Typically, each entry in
 `fields` corresponds to a member of `f`, but some field requests can expand into
 multiple display fields. `papers` is an array of objects defining the exported
-fields for each matching submission. Each `papers` entry has a `pid` property
-with the submission ID, and properties corresponding to the `fields`. The
+fields for each matching submission. Each `papers` entry has a `pid` field
+with the submission ID, and one field for each entry in `fields`. The
 `papers` entries are in the same order as `ids`. In some cases, the response
-will have a `statistics` property defining overall statistics for some of the
+will have a `statistics` field defining overall statistics for some of the
 requested fields.
 
 This response might be returned for the search `10-12` with `format=csv` and
@@ -75,14 +91,14 @@ HotCRP’s internal use, and may change at any time. Furthermore, in some cases
 (such as `f=allpref`), the returned data is compressed into a field-specific
 format that the HotCRP web application expands.
 
-### Search annotations
+## Search annotations
 
-The `groups` response property is an array of search annotations, and is
+The `groups` response field is an array of search annotations, and is
 returned for `THEN` searches, `LEGEND` searches, and searches on annotated
 tags. Each `groups` entry contains a position `pos`, which is an integer index
 into the search results. Annotations with `pos` `P` should appear immediately
 before the submission at index `P` in the result. A `groups` entry may also
-have other properties, including `legend` (the textual legend corresponding to
+have other fields, including `legend` (the textual legend corresponding to
 the annotation), `search` (for `THEN` searches, the search string representing
 the following results), and `annoid`.
 
@@ -107,31 +123,50 @@ This response might be returned for the search `10-12 THEN 5-8`:
 }
 ```
 
-### More
 
-The `search_params` response property is a URL-encoded string defining all
-relevant parameters for the search.
-
-Set the `hotlist` parameter to get a `hotlist` response property, which is
-used by the HotCRP browser Javascript to remember information about a list of
-papers.
-
-
-* param q
+* scope submeta:read
+* badge featured
+* param q search_string: The search expression.
 * param t
-* param f string: Space-separated field definitions
-* param format search_field_format: Format for returned submission fields (`f`)
+
+    * group Search modifiers
 * param qt
+
+    * group Search modifiers
 * param sort
+
+    * group Search modifiers
 * param scoresort
+
+    * group Search modifiers
 * param reviewer
-* param report string: Report defining default view options
-* param warn_missing boolean: Get warnings for missing submissions
-* param hotlist boolean: Get a `hotlist` response property
+
+    * group Search modifiers
+* param report string: Report defining default view options.
+* param f string: Space-separated display field definitions.
+* param format search_field_format: Format for returned display fields.
+* param warn_missing boolean: Get warnings for missing submissions.
+* param ?forceShow
+* param hotlist boolean: Get a `hotlist` response field.
+* param default_tracker_visibility boolean: Get a `default_tracker_visibility` response field (track managers only).
 * response_schema search_response
+* response ?hotlist hotlist
+
+    * condition hotlist
+* response ?default_tracker_visibility string: Default visibility for a meeting tracker over the matching submissions: `all` for the whole PC, `+TAG` or `-TAG` for PC members with or without a tag, or `+none` for administrators only.
+
+    * condition default_tracker_visibility
 * response ?fields [object]
+
+    * condition format
+
 * response ?papers [object]
+
+    * condition format
+
 * response ?statistics
+
+    * condition format
 
 
 # get /displayfields
@@ -142,6 +177,7 @@ Return a list of all supported display fields. Display fields can be requested
 in the web UI (search for `show:FIELDNAME`) or in the API (supply `f=FIELDNAME`
 to the `/search` endpoint).
 
+* scope other:read
 * response fields [display_field]
 
 
@@ -164,7 +200,26 @@ JSON array, rather than a JSON object. Applications wanting predictable JSON
 responses should use other API endpoints. Nevertheless, `/searchaction` can be
 more convenient than other more standardized APIs.
 
+* scope submeta:read
+* badge featured
 * param action string: Name of action
+* param q search_string: The search expression.
+* param t
+
+    * group Search modifiers
+* param qt
+
+    * group Search modifiers
+* param sort
+
+    * group Search modifiers
+* param scoresort
+
+    * group Search modifiers
+* param reviewer
+
+    * group Search modifiers
+* param ?forceShow
 
 
 # post /searchaction
@@ -176,7 +231,26 @@ defined by the `q` and `t` search parameters.
 
 The request format for POST requests is the same as for GET requests.
 
+* scope submeta:read
+* badge featured
 * param action string: Name of action
+* param q search_string: The search expression.
+* param t
+
+    * group Search modifiers
+* param qt
+
+    * group Search modifiers
+* param sort
+
+    * group Search modifiers
+* param scoresort
+
+    * group Search modifiers
+* param reviewer
+
+    * group Search modifiers
+* param ?forceShow
 
 
 # get /searchactions
@@ -191,4 +265,119 @@ examples include “Download > Review forms (zip)” and “Tag > Add to order�
 `/searchactions` API endpoint retrieves the search actions that the current user
 can access programmatically via the `/searchaction` API.
 
+* scope other:read
+* badge featured
 * response actions [search_action]: List of available actions
+
+
+# get /viewoptions
+
+> Retrieve display options
+
+Return the **view options** for a report: the fields a result is displayed
+with and how it is sorted. View options are expressed as a HotCRP view string
+of `show:`, `hide:`, and `sort:` terms. `report` selects which display these
+options govern: `pl` is the default `search` page, and `pf` is the
+`reviewprefs` page.
+
+The response gives the view from several angles: `display_current` is what the
+caller currently sees (the site default plus any of their own session
+adjustments), `display_default` is the site default, and `display_difference`
+expresses the caller’s view as a difference from HotCRP’s built-in default.
+
+* scope other:read
+* param ?report =pl|pf: Which report’s options to return; `pl` (paper list,
+  the default) or `pf` (review preferences).
+
+    * default pl
+* param ?q search_string: A search whose result provides context for evaluating the view.
+* response report =pl|pf: The report these options apply to.
+* response display_current string: The view currently in effect for the caller.
+* response display_default string: The site default view.
+* response display_difference string: The caller’s view as a difference from the built-in default.
+* response display_default_message_list message_list: Diagnostics about the default view.
+
+
+# post /viewoptions
+
+> Set default display options
+
+Save the site default view options for a report. Chair only. Supply the new view
+string in `display`; the response reports the resulting options exactly as
+[`viewoptions` GET](#get-viewoptions) does.
+
+* scope other:admin
+* param ?report =pl|pf: Which report to configure; `pl` (the default) or `pf`.
+
+    * default pl
+* param ?q search_string: A search whose result provides context for evaluating the view.
+* param =display string: The new default view string (`show:`/`hide:`/`sort:` terms).
+* response report =pl|pf: The report these options apply to.
+* response display_current string: The view currently in effect for the caller.
+* response display_default string: The new site default view.
+* response display_difference string: The caller’s view as a difference from the built-in default.
+* response display_default_message_list message_list: Diagnostics about the default view.
+* badge siteadmin
+
+
+# get /searchcompletion
+
+> Retrieve search completions
+
+Return suggested search keywords for the search box, in `searchcompletion`.
+Without arguments the full suggestion set is returned; `category` limits it to a
+single class—for example `sf` (submission fields), `has`, `ss` (saved
+searches), `dec` (decisions), or `round` (review rounds). Most entries are
+completion strings; a few are grouped objects that bundle several related
+suggestions.
+
+* scope other:read
+* param ?category string: Limit suggestions to one category (e.g. `sf`, `has`, `ss`, `dec`, `round`).
+* response searchcompletion [string|object]: Completion suggestions.
+
+
+# get /graphdata
+
+> Retrieve formula graph data
+
+Return the data behind a **formula graph** (HotCRP’s “Graphs” feature)—for
+instance a scatter plot of one formula against another over a set of
+submissions. Available to PC members only.
+
+`x` (required) and `y` are formula expressions for the axes. `gtype` selects
+the graph type: `scatter` (the default), `dot`, `ldot`, `cdf`, `multicdf`,
+`cumfreq`, `bar`, `fraction`, or `box`; several synonyms are also accepted,
+such as `ogive` for `cumfreq` and `count` for `bar`. The graph type may instead
+lead the `y` expression, as in `y=cdf` or `y=count ovemer`; if `gtype` is also
+given and disagrees, `gtype` wins and the response warns. For `multicdf`,
+`y` is the formula that splits the data into lines, as in
+`y=multicdf reviewer`.
+
+The submissions to plot come from a search: supply `q` (and optionally `t`).
+Several series can be overlaid by numbering the searches `q1`, `q2`, …, with
+optional labels `s1`, `s2`, … and per-series scopes `t1`, `t2`, … (which
+override `t`).
+
+The response carries the graph in HotCRP’s internal plotting format—the axis
+descriptions (`x`, `y`), the resolved graph type `gtype`, a `data_format`
+string, and the `data` points—intended for the HotCRP graphing UI rather than
+for general consumption. If the graph cannot be drawn, the response has
+`ok: false` and `message_list` explains why.
+
+* scope submeta:read
+* param x string: Formula expression for the x-axis.
+* param ?y string: Formula expression for the y-axis, optionally preceded by a graph type.
+* param ?gtype string: Graph type, such as `scatter` or `cdf`.
+* param ?xorder string: Ordering expression for the x-axis.
+* param ?q search_string: Search selecting the submissions to plot.
+* param ?t search_scope: Scope of search.
+* param ?s string: Label for the data series.
+* response gtype string: Graph type as drawn: `scatter`, `dot`, `ldot`, `cdf`, `cumfreq`, `bar`, `fraction`, or `box`. (`multicdf` graphs report `cdf`.)
+* response data_format string: Encoding of `data`: `cdf`, `xyis`, or `style_xyi`.
+* response data: The plotted data points; the exact shape depends on `data_format`.
+* response x object: X-axis description (scale, ticks, labels).
+* response y object: Y-axis description (scale, ticks, labels).
+* response ?series object: Series-axis description, for graphs that split data into series.
+* response ?xorder object: Description of the `xorder` ordering.
+* response ?id_format string: Whether non-CDF data points identify submissions (`pid`) or reviews (`rid`).
+* response ?mark_object_type string: Kind of object a data point represents for “find on graph”: `paper`, `review`, or `user`.

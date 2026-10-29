@@ -1,6 +1,6 @@
 <?php
 // a_conflict.php -- HotCRP assignment helper classes
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Conflict_Assignable extends Assignable {
     /** @var int */
@@ -30,10 +30,13 @@ class Conflict_AssignmentParser extends AssignmentParser {
     private $remove;
     /** @var bool */
     private $iscontact;
+    /** @var PaperOption */
+    private $opt;
     function __construct(Conf $conf, $aj) {
         parent::__construct("conflict");
         $this->remove = $aj->remove;
         $this->iscontact = $aj->iscontact;
+        $this->opt = $conf->option_by_id($this->iscontact ? PaperOption::CONTACTSID : PaperOption::PCCONFID);
     }
     static function load_conflict_state(AssignmentState $state) {
         if ($state->mark_type("conflict", ["pid", "cid"], "Conflict_Assigner::make")) {
@@ -48,26 +51,38 @@ class Conflict_AssignmentParser extends AssignmentParser {
         self::load_conflict_state($state);
     }
     function allow_paper(PaperInfo $prow, AssignmentState $state) {
-        if ($state->user->can_administer($prow)) {
+        if ($state->user->can_manage($prow)) {
             return true;
-        } else if ($prow->has_author($state->user)) {
-            if ($this->iscontact || !($whyNot = $state->user->perm_edit_paper($prow))) {
-                return true;
-            } else {
-                return new AssignmentError($whyNot);
-            }
-        } else {
+        }
+        if (!$prow->has_author($state->user)) {
             return false;
         }
+        if ($this->iscontact) {
+            // contacts are editable past the edit deadline
+            $fr = $state->user->perm_allow_edit_paper($prow);
+        } else {
+            $fr = $state->user->perm_edit_paper($prow)
+                ?? $state->user->perm_view_option($prow, $this->opt);
+            if (!$fr && !$state->user->can_edit_option($prow, $this->opt)) {
+                $state->paper_error("<0>{Submission} #{}’s {} cannot be edited now",
+                    $prow->paperId, $this->opt->edit_title($prow));
+                return false;
+            }
+        }
+        if (!$fr) {
+            return true;
+        }
+        $state->paper_error($fr);
+        return false;
     }
     function user_universe($req, AssignmentState $state) {
-        return $this->iscontact ? "any" : "pc";
+        return $this->iscontact ? self::UU_ANY : self::UU_PC;
     }
     /** @return ?CountMatcher */
     private function _matcher($req, Conf $conf) {
         if ($this->remove) {
             $min = $this->iscontact ? CONFLICT_CONTACTAUTHOR : CONFLICT_MAXUNCONFLICTED + 1;
-            return new CountMatcher(">=$min");
+            return new CountMatcher(">={$min}");
         }
         if (!$this->iscontact
             && ($pos = strpos((string) $req["conflict"], ":")) !== false) {
@@ -90,12 +105,12 @@ class Conflict_AssignmentParser extends AssignmentParser {
         return null;
     }
     function allow_user(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
-        return $contact->contactId != 0;
+        return $contact->contactId !== 0;
     }
     function apply(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
         $res = $state->remove(new Conflict_Assignable($prow->paperId, $contact->contactId));
         $old_ct = empty($res) ? 0 : $res[0]->_ctype;
-        $admin = $state->user->can_administer($prow);
+        $admin = $state->user->can_manage($prow);
         if ($this->remove) {
             $ct = 0;
         } else if ($this->iscontact) {
@@ -106,19 +121,28 @@ class Conflict_AssignmentParser extends AssignmentParser {
                 $text = substr($text, $colon + 1);
             }
             $ct = $state->conf->conflict_set()->parse_assignment($text);
-            if ($ct === false || Conflict::is_author($ct)) {
+            if ($ct === false) {
                 $text = $text === "" ? "<empty>" : "text";
                 return new AssignmentError("<0>Conflict type ‘{$text}’ not found");
+            } else if (Conflict::is_author($ct)) {
+                return new AssignmentError("<0>The ‘conflict’ assigner can’t control authorship");
             }
             $ct = Conflict::apply_pc($old_ct, $ct, $admin);
         }
         $mask = $this->iscontact ? CONFLICT_CONTACTAUTHOR : Conflict::FM_PC;
         $matcher = $this->_matcher($req, $state->conf);
-        if (($matcher && !$matcher->test($old_ct & $mask))
-            || (!$this->iscontact && Conflict::is_pinned($old_ct) && !$admin)) {
-            $new_ct = $old_ct;
-        } else {
+        $new_ct = $old_ct;
+        if ((!$matcher || $matcher->test($old_ct & $mask))
+            && ($admin || $this->iscontact || !Conflict::is_pinned($old_ct))) {
             $new_ct = ($old_ct & ~$mask) | $ct;
+        }
+        if ($new_ct !== $old_ct
+            && !$this->iscontact
+            && !$admin
+            && (!$contact->isPC
+                || ($contact->roles & Contact::ROLE_ANYPC & $state->user->viewable_roles_mask()) === 0)) {
+            $state->paper_error("<0>Only PC members can be assigned conflicts");
+            $new_ct = $old_ct;
         }
         if ($new_ct !== 0) {
             $state->add(new Conflict_Assignable($prow->paperId, $contact->contactId, $new_ct));
@@ -176,13 +200,13 @@ class Conflict_Assigner extends Assigner {
 
         if ($has_conflict) {
             if (isset($item["_override"])
-                && $state->user->can_administer($prow)) {
+                && $state->user->can_manage($prow)) {
                 $state->append_item_near(MessageItem::warning("<0>Overriding conflict for #{$pid} {$type} assignment {$uname}"), $item);
                 return;
             }
 
             $state->append_item_near(MessageItem::error("<0>{$uname} cannot {$type} #{$pid} because they are conflicted"), $item);
-            if ($state->csv_context && $state->user->allow_administer($prow)) {
+            if ($state->csv_context && $state->user->allow_manage($prow)) {
                 $state->append_item_near(MessageItem::inform("<0>Set an “override” column to “yes” to force this assignment."), $item);
             }
             throw new AssignmentError("");
@@ -195,7 +219,7 @@ class Conflict_Assigner extends Assigner {
             $state->append_item_near(MessageItem::inform("<5>" . $potconf->group_html_ul($g)), $item);
         }
         ++$state->potential_conflict_warnings;
-        $can_admin = $state->user->allow_administer($prow);
+        $can_admin = $state->user->allow_manage($prow);
         if ($state->potential_conflict_warnings > 1
             && !$state->confirm_potential_conflicts) {
             return;
@@ -209,12 +233,15 @@ class Conflict_Assigner extends Assigner {
         if ($state->potential_conflict_warnings > 1) {
             // do nothing
         } else if ($can_admin) {
-            $state->append_item_near(MessageItem::inform("<5>You may want to <a href=\"" . $state->conf->hoturl("conflictassign") . "\" target=\"_blank\" rel=\"noopener\">confirm all potential conflicts</a>."), $item);
+            $state->append_item_near(MessageItem::inform("<5>You may want to " . $state->conf->hotlink("confirm all potential conflicts", "conflictassign", null, ["target" => "_blank", "rel" => "noopener"])), $item);
         } else {
             $state->append_item_near(MessageItem::inform("<5>You may want to ask an administrator to confirm potential conflicts."), $item);
         }
     }
 
+    function about() {
+        return SearchTerm::ABOUT_SUB;
+    }
     function unparse_description() {
         return "conflict";
     }
@@ -267,9 +294,15 @@ class Conflict_Assigner extends Assigner {
     }
     function execute(AssignmentSet $aset) {
         if ($this->ctype) {
-            $aset->stage_qe("insert into PaperConflict set paperId=?, contactId=?, conflictType=? on duplicate key update conflictType=?", $this->pid, $this->cid, $this->ctype, $this->ctype);
+            $aset->stage_qe("insert into PaperConflict set paperId=?, contactId=?, conflictType=? on duplicate key update conflictType=?", $this->pid, $this->cid(), $this->ctype, $this->ctype);
         } else {
-            $aset->stage_qe("delete from PaperConflict where paperId=? and contactId=?", $this->pid, $this->cid);
+            $aset->stage_qe("delete from PaperConflict where paperId=? and contactId=?", $this->pid, $this->cid());
+        }
+    }
+    function cleanup(AssignmentSet $aset) {
+        $old_ct = $this->item->pre("_ctype") ?? 0;
+        if (Conflict::is_author($old_ct) !== Conflict::is_author($this->ctype)) {
+            $this->contact->update_cdb_roles();
         }
     }
 }

@@ -1,0 +1,92 @@
+<?php
+// rendercapture.php -- HotCRP page render capture
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
+
+class RenderCapture {
+    /** @var int */
+    public $status;
+    /** @var list<string> */
+    public $headers;
+    /** @var string */
+    public $content;
+
+    /** @return RenderCapture
+     * @suppress PhanAccessReadOnlyProperty */
+    static function make(Qrequest $qreq) {
+        $conf = $qreq->conf();
+        $user = $qreq->user();
+
+        // render as `$user`, as a live request would, and restore afterwards
+        Qrequest::set_main_request($qreq);
+        $old_viewer = $conf->swap_viewer($user);
+        $old_main_user = Contact::$main_user;
+        Contact::$main_user = $user;
+        Navigation::headers_reset();
+        $conf->_header_printed = false;
+        // mode 2 throws completions and routes feedback into the page
+        $old_test_mode = Navigation::$test_mode;
+        Navigation::$test_mode = 2;
+
+        ob_start();
+        try {
+            $pc = $conf->page_components($user, $qreq);
+            $pagej = $pc->get($qreq->page());
+            if (!$pagej || str_starts_with($pagej->name, "__")) {
+                Multiconference::fail($qreq, 404, ["link" => true], "<0>Page not found");
+            } else if ($user->is_disabled() && !($pagej->allow_disabled ?? false)) {
+                Multiconference::fail_user_disabled($user, $qreq);
+            }
+            if (!isset($pagej->request_function)
+                || $pc->call_function($pagej, $pagej->request_function, $pagej) !== false) {
+                foreach ($pc->members($pagej->group, "request_function") as $gj) {
+                    if ($pc->call_function($gj, $gj->request_function, $gj) === false) {
+                        break;
+                    }
+                }
+            }
+            $pc->print_body_members($pagej->group);
+        } catch (Redirection $redir) {
+            $conf->saved_messages_commit($qreq);
+            Navigation::http_response_code($redir->status);
+            Navigation::header("Location: " . $qreq->navigation()->resolve($redir->url));
+        } catch (JsonCompletion $jc) {
+            $jc->result->emit($qreq);
+        } catch (PageCompletion $unused) {
+        } finally {
+            Navigation::$test_mode = $old_test_mode;
+            $conf->swap_viewer($old_viewer);
+            Contact::$main_user = $old_main_user;
+        }
+
+        $rc = new RenderCapture;
+        $rc->status = Navigation::http_response_code();
+        $rc->headers = Navigation::headers_list();
+        $rc->content = ob_get_clean();
+        return $rc;
+    }
+
+    /** @param string $name
+     * @return ?string */
+    function header($name) {
+        $value = null;
+        foreach ($this->headers as $h) {
+            if (strlen($h) <= strlen($name)
+                || $h[strlen($name)] !== ":"
+                || substr_compare($h, $name, 0, strlen($name), true) !== 0) {
+                continue;
+            }
+            $vx = trim(substr($h, strlen($name) + 1));
+            if ($value === null) {
+                $value = $vx;
+            } else {
+                $value .= ", " . $vx;
+            }
+        }
+        return $value;
+    }
+
+    /** @return bool */
+    function ok() {
+        return $this->status >= 200 && $this->status < 300;
+    }
+}

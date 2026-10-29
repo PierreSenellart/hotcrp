@@ -1,6 +1,6 @@
 <?php
 // api_potentialconflicts.php -- HotCRP user-related API calls
-// Copyright (c) 2008-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2008-2026 Eddie Kohler; see LICENSE.
 
 class PotentialConflicts_API {
     /** @return JsonResult */
@@ -14,7 +14,7 @@ class PotentialConflicts_API {
         }
 
         // API accessible to authors and administrators
-        if (!$prow->has_author($user) && !$user->can_administer($prow)) {
+        if (!$prow->has_author($user) && !$user->is_admin($prow)) {
             return JsonResult::make_permission_error("p");
         }
 
@@ -25,11 +25,10 @@ class PotentialConflicts_API {
             return JsonResult::make_permission_error("p", "<0>PC conflicts not visible");
         }
 
-        // apply changes
-        $ps = new PaperStatus($user);
-        $ps->set_ignore_errors(true);
+        // extract unsaved changes
+        $njson = $nqreq = null;
         if (isset($qreq->json)) {
-            $json = json_decode($qreq->json);
+            $json = Json::decode_user($qreq->json, 1 << 20);
             if (!is_object($json)) {
                 return JsonResult::make_parameter_error("json");
             }
@@ -40,11 +39,11 @@ class PotentialConflicts_API {
             if (isset($json->collaborators)) {
                 $njson->collaborators = $json->collaborators;
             }
-            if (count((array) $njson) > 0) {
-                $ps->prepare_save_paper_json($njson, $prow);
+            if (count((array) $njson) === 0) {
+                $njson = null;
             }
         } else {
-            $nqreq = new Qrequest("POST");
+            $nqreq = (new Qrequest("POST"))->set_user($user);
             $hasau = false;
             foreach ($qreq as $k => $v) {
                 if ($k === "collaborators") {
@@ -57,14 +56,31 @@ class PotentialConflicts_API {
             if ($hasau) {
                 $nqreq["has_authors"] = "1";
             }
-            if ($nqreq->count() > 0) {
+            if ($nqreq->count() === 0) {
+                $nqreq = null;
+            }
+        }
+
+        // apply changes; this runs the save machinery, so it requires edit
+        // permission (in particular, `submeta:write` scope)
+        if ($njson || $nqreq) {
+            if (($whynot = $user->perm_allow_edit_paper($prow))) {
+                return Conf::paper_error_json_result($whynot);
+            }
+            $overrides = $user->add_overrides(Contact::OVERRIDE_CONFLICT);
+            $ps = new PaperStatus($user);
+            $ps->set_ignore_errors(true);
+            if ($njson) {
+                $ps->prepare_save_paper_json($njson, $prow);
+            } else {
                 $ps->prepare_save_paper_web($nqreq, $prow);
             }
+            $user->set_overrides($overrides);
         }
 
         // compute potential conflict list
         $potconfs = [];
-        foreach ($prow->conf->pc_members() as $pcm) {
+        foreach ($prow->conf->listed_pc_members() as $pcm) {
             if ($prow->has_author($pcm)) {
                 $potconfs[] = (object) [
                     "uid" => $pcm->contactId,

@@ -84,23 +84,25 @@ class Comment_SearchTerm extends SearchTerm {
         ];
     }
     static function parse($word, SearchWord $sword, PaperSearch $srch) {
-        $a = CountMatcher::unpack_search_comparison($sword->qword);
-        if (($qr = SearchTerm::make_constant(CountMatcher::comparison_tautology($a[1], $a[2])))) {
+        [$nsword, $op, $value] = $sword->pop_comparison();
+        if (($qr = SearchTerm::make_constant(CountMatcher::comparison_tautology($op, $value)))) {
             return $qr;
         }
-        $tags = $contacts = null;
-        if (str_starts_with($a[0], "#")
-            && !$srch->conf->pc_tag_exists(substr($a[0], 1))) {
-            $tags = new TagSearchMatcher($srch->user);
-            $tags->add_check_tag(substr($a[0], 1), true);
+        $tags = $usrch = null;
+        if ($nsword
+            && str_starts_with($nsword->qword, "#")
+            && !$srch->conf->pc_tag_exists(substr($nsword->qword, 1))) {
+            $tags = (new TagSearchMatcher($srch->user))
+                ->set_allow_star(true);
+            $tags->add_check_tag(substr($nsword->qword, 1));
             foreach ($tags->error_ftexts() as $e) {
                 $srch->lwarning($sword, $e);
             }
-        } else if ($a[0] !== "") {
-            $contacts = $srch->matching_uids($a[0], $sword->quoted, false);
+        } else if ($nsword) {
+            $usrch = $srch->user_search(ContactSearch::F_USER | ContactSearch::F_REQUIRED, $nsword);
         }
-        $compar = CountMatcher::unparse_comparison($a[1], $a[2]);
-        $csm = new ContactCountMatcher($compar, $contacts);
+        $compar = CountMatcher::unparse_comparison($op, $value);
+        $csm = new ContactCountMatcher($compar, $usrch);
         return new Comment_SearchTerm($srch->user, $csm, $tags, $sword->kwdef);
     }
     /** @return bool */
@@ -126,7 +128,7 @@ class Comment_SearchTerm extends SearchTerm {
         if ($this->commentRound !== null) {
             $where[] = "commentRound=" . $this->commentRound;
         }
-        if ($this->csm->has_contacts()) {
+        if ($this->csm->has_contacts() && $this->user->isPC) {
             $where[] = $this->csm->contact_match_sql("contactId");
         }
         if ($this->tags && !$this->tags->test_empty()) {
@@ -144,14 +146,20 @@ class Comment_SearchTerm extends SearchTerm {
     function test(PaperInfo $row, $xinfo) {
         $textless = $this->type_mask === (CommentInfo::CT_DRAFT | CommentInfo::CT_RESPONSE);
         $n = 0;
+        $ucsm = $this->csm->has_contacts() ? $this->csm : null;
         foreach ($row->viewable_comment_skeletons($this->user, $textless) as $crow) {
-            if ($this->csm->test_contact($crow->contactId)
-                && ($crow->commentType & $this->type_mask) == $this->type_value
+            if ((!$ucsm
+                 || ($this->user->can_view_comment_identity($row, $crow)
+                     && $ucsm->test_contact($crow->contactId)))
+                && ($crow->commentType & $this->type_mask) === $this->type_value
                 && ($this->commentRound === null || $crow->commentRound === $this->commentRound)
                 && (!$this->only_author || $crow->commentType >= CommentInfo::CTVIS_AUTHOR)
                 && (!$this->tags || $this->tags->test((string) $crow->viewable_tags($this->user))))
                 ++$n;
         }
         return $this->csm->test($n);
+    }
+    function about() {
+        return self::ABOUT_COMMENTS;
     }
 }

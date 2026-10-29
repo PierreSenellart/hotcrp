@@ -35,7 +35,7 @@ class TagReport_PaperColumn extends PaperColumn {
     }
     function content(PaperList $pl, PaperInfo $row) {
         $a = [];
-        preg_match_all('/ (\d+)~' . preg_quote($this->tag) . '#(\S+)/i', $row->all_tags_text(), $m);
+        preg_match_all('/ (\d+)~' . preg_quote($this->tag, '/') . '#(\S+)/i', $row->all_tags_text(), $m);
         for ($i = 0; $i != count($m[0]); ++$i) {
             if ($this->viewtype == 2 && $m[2][$i] <= 0) {
                 continue;
@@ -60,21 +60,20 @@ class TagReport_PaperColumn extends PaperColumn {
         return (object) $cj;
     }
     static function expand($name, XtParams $xtp, $xfj, $m) {
-        if (!$xtp->user->can_view_most_tags()) {
-            return null;
-        }
-        $tagset = $xtp->conf->tags();
-        if ($name === "tagreports") {
-            return array_map(function ($t) use ($xfj) {
-                return self::column_json($xfj, $t->tag);
-            }, $tagset->sorted_entries_having(TagInfo::TFM_VOTES | TagInfo::TF_RANK));
+        $dt = $xtp->conf->tags();
+        if (strpos($name, ":") === false) {
+            $tilist = $dt->sorted_entries_having(TagInfo::TFM_VOTES | TagInfo::TF_RANK);
         } else {
-            $ti = $tagset->find($m[1]);
-            if ($ti && $ti->is(TagInfo::TFM_VOTES | TagInfo::TF_RANK)) {
-                return self::column_json($xfj, $m[1]);
-            } else {
-                return null;
+            $tilist = [$dt->find($m[1])];
+        }
+        $clist = [];
+        foreach ($tilist as $ti) {
+            if ($ti
+                && $ti->is(TagInfo::TFM_VOTES | TagInfo::TF_RANK)
+                && (!$xtp->user || $xtp->user->can_view_peruser_tag(null, $ti->tag))) {
+                $clist[] = self::column_json($xfj, $ti->tag);
             }
         }
+        return $clist;
     }
 }

@@ -1,6 +1,6 @@
 <?php
 // a_review.php -- HotCRP assignment helper classes
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Review_Assignable extends Assignable {
     /** @var ?int */
@@ -106,23 +106,24 @@ class Review_AssignmentParser extends AssignmentParser {
         return ReviewAssigner_Data::make($req, $state, $this->rtype);
     }
     function allow_paper(PaperInfo $prow, AssignmentState $state) {
-        if (!$state->user->can_administer($prow)) {
+        if (!$state->user->can_manage_reviews($prow)) {
             return false;
-        } else if ($prow->timeWithdrawn > 0 && $this->rtype !== 0) {
-            return new AssignmentError($prow->failure_reason(["withdrawn" => 1]));
+        } else if ($prow->timeWithdrawn <= 0 || $this->rtype === 0) {
+            return true;
         }
-        return true;
+        $state->paper_error($prow->failure_reason(["withdrawn" => 1]));
+        return false;
     }
     /** @param CsvRow $req */
     function user_universe($req, AssignmentState $state) {
         if ($this->rtype > REVIEW_EXTERNAL) {
-            return "pc";
+            return self::UU_PC;
         } else if ($this->rtype == 0
                    || (($rdata = $this->make_rdata($req, $state))
                        && !$rdata->might_create_review())) {
-            return "reviewers";
+            return self::UU_REVIEWERS;
         }
-        return "any";
+        return self::UU_ANY;
     }
     function paper_filter($contact, $req, AssignmentState $state) {
         $rdata = $this->make_rdata($req, $state);
@@ -160,15 +161,18 @@ class Review_AssignmentParser extends AssignmentParser {
         return null;
     }
     function allow_user(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
-        // User “none” is never allowed
+        $rdata = $this->make_rdata($req, $state);
+        // A user not found among the reviewers is a no-op for `clearreview`;
+        // other non-users are never allowed
         if (!$contact->contactId) {
-            return false;
+            return $contact === $state->not_found_user()
+                && !$rdata->might_create_review();
         }
         // PC reviews must be PC members
-        $rdata = $this->make_rdata($req, $state);
         if ($rdata->newtype >= REVIEW_PC && !$contact->is_pc_member()) {
             $uname = $contact->name(NAME_E);
-            return new AssignmentError("<0>‘{$uname}’ is not a PC member and cannot be assigned a PC review");
+            $state->paper_error("<0>‘{$uname}’ is not a PC member and cannot be assigned a PC review");
+            return false;
         }
         // Conflict allowed if we're not going to assign a new review
         if ($this->rtype == 0
@@ -181,17 +185,21 @@ class Review_AssignmentParser extends AssignmentParser {
         // XXX this should use perm/can_create_review
         if ($contact->is_pc_member()
             && !$contact->pc_track_assignable($prow)
-            && !$contact->allow_administer($prow)
+            && !$contact->allow_admin($prow)
             && $prow->review_type($contact) <= 0
-            && (!$state->user->can_administer($prow)
+            && (!$state->user->can_manage_reviews($prow)
                 || !isset($req["override"])
                 || !friendly_boolean($req["override"]))) {
             $uname = $contact->name(NAME_E);
-            return new AssignmentError("<0>{$uname} cannot be assigned to review #{$prow->paperId}");
+            $state->paper_error("<0>{$uname} cannot be assigned to review #{$prow->paperId}");
+            return false;
         }
         return true;
     }
     function apply(PaperInfo $prow, Contact $user, $req, AssignmentState $state) {
+        if ($user === $state->not_found_user()) {
+            return false;
+        }
         $rdata = $this->make_rdata($req, $state);
         if ($rdata->error_ftext) {
             return new AssignmentError($rdata->error_ftext);
@@ -223,7 +231,7 @@ class Review_AssignmentParser extends AssignmentParser {
             $rev = $revmatch;
             $rev->_rtype = 0;
             $rev->_round = $rdata->newround;
-            $rev->_rflags = 0;
+            $rev->_rflags = $rdata->ghost ? 0 : ReviewInfo::RF_LIVE;
             $rev->_requested_by = $state->user->contactId;
         }
         if (!$rev->_rtype || $rdata->newtype > 0) {
@@ -233,7 +241,7 @@ class Review_AssignmentParser extends AssignmentParser {
             $rev->_rtype = REVIEW_EXTERNAL;
         }
         if ($rev->_rtype === REVIEW_EXTERNAL
-            && ($user->roles & Contact::ROLE_PC) !== 0) {
+            && $user->is_pc_member()) {
             $rev->_rtype = REVIEW_PC;
         }
         if ($rev->_rtype === REVIEW_EXTERNAL
@@ -242,7 +250,7 @@ class Review_AssignmentParser extends AssignmentParser {
             if ($user->cdb_confid !== 0) {
                 // need to look up by email
                 $pemail = Dbl::fetch_value($state->conf->contactdb(), "select email from ContactInfo where contactDbId=?", $user->primaryContactId);
-                $puser = $state->user_by_email($pemail);
+                $puser = $state->user_by_email($pemail, true);
             } else {
                 $puser = $state->user_by_id($user->primaryContactId);
             }
@@ -257,7 +265,7 @@ class Review_AssignmentParser extends AssignmentParser {
         }
         if (isset($req["override"])
             && friendly_boolean($req["override"])
-            && $state->user->can_administer($prow)) {
+            && $state->user->can_manage_reviews($prow)) {
             $rev->_override = 1;
         }
         $state->add($rev);
@@ -298,39 +306,42 @@ class Review_Assigner extends Assigner {
         }
         return new Review_Assigner($item, $state);
     }
+    function about() {
+        return SearchTerm::ABOUT_REVIEWS;
+    }
     function unparse_description() {
         return "review";
     }
     /** @return string */
     private function unparse_preference_span(AssignmentSet $aset) {
         $prow = $aset->prow($this->pid);
-        $pf = $prow->preference($this->cid);
-        $tv = $pf->preference ? null : $prow->topic_interest_score($this->cid);
+        $pf = $prow->preference($this->cid());
+        $tv = $pf->preference ? null : $prow->topic_interest_score($this->cid());
         return $pf->exists() || $tv ? " " . $pf->unparse_span($tv) : "";
     }
     /** @param bool $before
      * @return string */
-    private function icon_h($before) {
+    private function icon_h(AssignmentSet $aset, $before) {
         $rflags = $this->item->get($before, "_rflags");
         return review_type_icon($this->item->get($before, "_rtype"),
-                                ReviewInfo::rflags_icon_class_suffix($rflags));
+                                ReviewInfo::rflags_icon_class_suffix($rflags, $aset->conf->ghost_review_flags()));
     }
     function unparse_display(AssignmentSet $aset) {
         $t = $aset->user->reviewer_html_for($this->contact);
-        $deleted = !$this->item->post("_rtype");
+        $deleted = !$this->rtype;
         $oldrflags = $this->item->pre_i("_rflags");
         $newrflags = $this->item->post_i("_rflags");
         if ($this->item->differs("_rtype")
             || (($oldrflags ^ $newrflags) & ReviewInfo::RF_SUBMITTED) !== 0) {
             if ($this->item->pre("_rtype")) {
-                $i = $this->icon_h(true);
+                $i = $this->icon_h($aset, true);
                 $t .= $deleted ? " {$i}" : " <del>{$i}</del>";
             }
-            if ($this->item->post("_rtype")) {
-                $t .= ' <ins>' . $this->icon_h(false) . '</ins>';
+            if ($this->rtype) {
+                $t .= ' <ins>' . $this->icon_h($aset, false) . '</ins>';
             }
         } else if (!$deleted) {
-            $t .= ' ' . $this->icon_h(false);
+            $t .= ' ' . $this->icon_h($aset, false);
         }
         if ($this->item->differs("_round")) {
             if (($round = $this->item->pre("_round"))) {
@@ -377,9 +388,9 @@ class Review_Assigner extends Assigner {
     }
     function account(AssignmentSet $aset, AssignmentCountSet $deltarev) {
         $aset->show_column("reviewers");
-        if ($this->cid > 0) {
+        if ($this->cid() > 0) {
             $deltarev->has |= AssignmentCountSet::HAS_REVIEW;
-            $ct = $deltarev->ensure($this->cid);
+            $ct = $deltarev->ensure($this->cid());
             ++$ct->ass;
             $oldtype = $this->item->pre("_rtype") ? : 0;
             $ct->rev += ($this->rtype != 0 ? 1 : 0) - ($oldtype != 0 ? 1 : 0);
@@ -410,16 +421,20 @@ class Review_Assigner extends Assigner {
                 $aset->conf->update_rev_tokens_setting(min($vals));
             }, $this->item->existed() ? 0 : 1);
         }
+        if ($this->rtype
+            && ($this->item->post("_rflags") & ReviewInfo::RF_LIVE) === 0) {
+            $extra["ghost"] = true;
+        }
         $reviewId = $aset->user->assign_review($this->pid, $this->contact, $this->rtype, $extra);
         if ($this->unsubmit && $reviewId) {
             assert($this->item->after !== null);
             $prow = $aset->prow($this->pid);
             $rrow = $prow->fresh_review_by_id($reviewId);
-            $rv = (new ReviewValues($aset->conf))
+            $rv = (new ReviewValues($aset->user))
                 ->set_autosearch(false)
                 ->set_can_unsubmit(true)
                 ->set_req_ready(false);
-            $rv->check_and_save($aset->user, $prow, $rrow);
+            $rv->check_and_save($prow, $rrow);
         }
         if (($extra["token"] ?? false) && $reviewId) {
             $this->token = $aset->conf->fetch_ivalue("select reviewToken from PaperReview where paperId=? and reviewId=?", $this->pid, $reviewId);
@@ -430,19 +445,18 @@ class Review_Assigner extends Assigner {
     }
     /** @param list<Review_Assigner> $as */
     static function notify_all(AssignmentSet $aset, $as) {
-        $pids = $cids = [];
+        $pids = [];
         foreach ($as as $a) {
             $pids[] = $a->pid;
-            $cids[] = $a->cid;
-            $aset->conf->invalidate_user_by_id($a->cid);
-            $aset->conf->prefetch_user_by_id($a->cid);
+            $aset->conf->invalidate_user_by_id($a->cid());
+            $aset->conf->prefetch_user_by_id($a->cid());
         }
         $prows = $aset->conf->paper_set(["paperId" => $pids]);
         foreach ($as as $a) {
-            $user = $aset->conf->user_by_id($a->cid);
+            $user = $aset->conf->user_by_id($a->cid());
             $prow = $prows->paper_by_id($a->pid);
             HotCRPMailer::send_to($user, $a->notify, [
-                "prow" => $prow, "rrow" => $prow->fresh_review_by_user($a->cid),
+                "prow" => $prow, "rrow" => $prow->fresh_review_by_user($a->cid()),
                 "requester_contact" => $aset->user, "reason" => $a->item["_reason"]
             ]);
         }

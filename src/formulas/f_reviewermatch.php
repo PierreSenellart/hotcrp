@@ -1,6 +1,6 @@
 <?php
 // formulas/f_reviewermatch.php -- HotCRP helper class for formula expressions
-// Copyright (c) 2009-2022 Eddie Kohler; see LICENSE.
+// Copyright (c) 2009-2026 Eddie Kohler; see LICENSE.
 
 class ReviewerMatch_Fexpr extends Fexpr {
     /** @var Contact */
@@ -35,6 +35,9 @@ class ReviewerMatch_Fexpr extends Fexpr {
         }
         return new ReviewerMatch_Fexpr($user, $arg);
     }
+    function about() {
+        return SearchTerm::ABOUT_REVIEWS;
+    }
     function inferred_index() {
         return self::IDX_REVIEW;
     }
@@ -43,14 +46,13 @@ class ReviewerMatch_Fexpr extends Fexpr {
         // NB the following case also catches attempts to view a non-viewable
         // user tag (the csearch will return nothing).
         if ($this->csearch->is_empty()) {
-            return "null";
+            return "false";
         }
-        $state->queryOptions["reviewSignatures"] = true;
-        $t = $state->review_identity_loop_cid();
-        return "({$t} !== null ? array_search({$t}, [" . join(", ", $this->csearch->user_ids()) . "]) !== false : null)";
+        $t = $state->current_uid();
+        return "({$t} !== null ? array_search({$t}, [" . join(", ", $this->csearch->user_ids()) . "]) !== false : false)";
     }
-    function matches_at_most_once() {
-        return count($this->csearch->user_ids()) <= 1;
+    function allow_autoaggregate() {
+        return true;
     }
     #[\ReturnTypeWillChange]
     function jsonSerialize() {

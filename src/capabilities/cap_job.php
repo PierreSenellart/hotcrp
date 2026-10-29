@@ -1,22 +1,49 @@
 <?php
 // cap_job.php -- HotCRP batch job capability management
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
-class Job_Capability extends TokenInfo {
+class Job_Token extends TokenInfo {
     function __construct(Conf $conf) {
         parent::__construct($conf, TokenInfo::JOB);
     }
 
     /** @param string $batch_class
      * @param list<string> $argv
-     * @return Job_Capability */
+     * @return Job_Token */
     static function make(Contact $user, $batch_class, $argv = []) {
-        return (new Job_Capability($user->conf))
-            ->set_user($user)
+        $tok = (new Job_Token($user->conf))
             ->set_token_pattern("hcj_[24]")
             ->set_invalid_in(86400)
             ->set_expires_in(86400)
             ->set_input(["batch_class" => $batch_class, "argv" => $argv]);
+        if (!$user->is_root_user()) {
+            $tok->set_user_from($user, false);
+        }
+        if ($user->has_scope()) {
+            // a job requested through a scoped token runs with that scope,
+            // even in a separate process: see `job_user`
+            $tok->set_input("scope", TokenScope::unparse($user->scope()));
+        }
+        return $tok;
+    }
+
+    /** @return Contact
+     *
+     * Return the user on whose behalf this job runs: the job’s user, with
+     * the token scope (if any) under which the job was requested, or the
+     * root user if the job has no user. A scoped job loads a fresh Contact,
+     * since installing the scope on a shared, cached user would leak it. */
+    function job_user() {
+        if ($this->contactId <= 0) {
+            return $this->conf->root_user();
+        }
+        $scope = $this->input("scope");
+        if (!is_string($scope) || $scope === "") {
+            return $this->conf->user_by_id($this->contactId) ?? Contact::make($this->conf);
+        }
+        $u = $this->conf->fresh_user_by_id($this->contactId) ?? Contact::make($this->conf);
+        $u->set_scope($scope);
+        return $u;
     }
 
     /** @param string $token
@@ -35,21 +62,21 @@ class Job_Capability extends TokenInfo {
     }
 
     /** @param string $token
-     * @return ?Job_Capability */
+     * @return ?Job_Token */
     static function find($token, Conf $conf) {
         if (!($rtoken = self::canonical_token($token))) {
             return null;
         }
         $result = $conf->ql("select * from Capability where salt=? and capabilityType=?",
             $rtoken, TokenInfo::JOB);
-        $tok = TokenInfo::fetch($result, $conf, false, "Job_Capability");
+        $tok = TokenInfo::fetch($result, $conf, false, "Job_Token");
         $result->close();
         return $tok;
     }
 
     /** @param string $batch_class
      * @param list<string> $argv
-     * @return ?Job_Capability */
+     * @return ?Job_Token */
     static function find_active_match(Contact $user, $batch_class, $argv = []) {
         $result = $user->conf->ql("select * from Capability
                 where capabilityType=? and salt>='hcj' and salt<'hck'
@@ -62,7 +89,7 @@ class Job_Capability extends TokenInfo {
             $user->contactId > 0 ? $user->contactId : 0,
             Conf::$now, Conf::$now,
             json_encode_db(["batch_class" => $batch_class, "argv" => $argv]));
-        $tok = TokenInfo::fetch($result, $user->conf, false, "Job_Capability");
+        $tok = TokenInfo::fetch($result, $user->conf, false, "Job_Token");
         $result->close();
         return $tok;
     }
@@ -88,7 +115,7 @@ class Job_Capability extends TokenInfo {
 
     /** @param string $salt
      * @param ?string $batch_class
-     * @return Job_Capability */
+     * @return Job_Token */
     static function claim($salt, Conf $conf, $batch_class = null) {
         $tok = self::find($salt, $conf);
         if (!$tok || !$tok->is_batch_class($batch_class)) {
@@ -173,7 +200,7 @@ class Job_Capability extends TokenInfo {
 
         try {
             $argv = [$batch_class];
-            if (($confid = $this->conf->opt("confid"))) {
+            if (($confid = $this->conf->confid) !== "") {
                 // The `-n` option is not normally needed: the batch class
                 // calls initialize_conf, which does nothing as Conf::$main
                 // is already initialized. But we should include it anyway
@@ -215,11 +242,17 @@ class Job_Capability extends TokenInfo {
         $cmd = [];
         if ($batchmode === "background"
             && ($daemonize = $this->conf->opt("daemonizeCommand"))) {
-            $cmd[] = $daemonize;
+            if (is_array($daemonize)) {
+                array_push($cmd, ...$daemonize);
+            } else if (is_string($daemonize)) {
+                $cmd[] = $daemonize;
+            } else if (is_executable("/bin/bash")) {
+                $cmd[] = SiteLoader::$root . "/batch/hotcrp-daemonize";
+            }
         }
         $cmd[] = self::shell_quote_light($this->conf->opt("phpCommand") ?? "php");
         $cmd[] = self::shell_quote_light($paths[0]);
-        if (($confid = $this->conf->opt("confid"))) {
+        if (($confid = $this->conf->confid)) {
             $cmd[] = self::shell_quote_light("-n{$confid}");
         }
         foreach ($this->input("argv") as $w) {
@@ -246,3 +279,5 @@ class Job_Capability extends TokenInfo {
         return escapeshellarg($word);
     }
 }
+
+class_alias("Job_Token", "Job_Capability");

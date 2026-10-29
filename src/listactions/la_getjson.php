@@ -1,6 +1,6 @@
 <?php
 // listactions/la_getjson.php -- HotCRP helper classes for list actions
-// Copyright (c) 2006-2023 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class GetJson_ListAction extends ListAction {
     /** @var bool */
@@ -22,7 +22,7 @@ class GetJson_ListAction extends ListAction {
     function run(Contact $user, Qrequest $qreq, SearchSelection $ssel) {
         $old_overrides = $user->add_overrides(Contact::OVERRIDE_CONFLICT);
         $pj = [];
-        $pex = new PaperExport($user);
+        $pex = (new PaperExport($user))->set_ignore_soft_word_limits(true);
         if ($this->iszip) {
             $this->zipdoc = new DocumentInfoSet($user->conf->download_prefix . "data.zip");
             $pex->on_document_export([$this, "document_callback"]);
@@ -42,24 +42,24 @@ class GetJson_ListAction extends ListAction {
         $user->set_overrides($old_overrides);
         if (count($pj) === 1) {
             $pj = $pj[0];
-            $pj_filename = $user->conf->download_prefix . "paper" . $ssel->selection_at(0) . "-data.json";
+            $pj_filename = $user->conf->download_prefix . "paper{$pj->pid}-data.json";
         } else {
             $pj_filename = $user->conf->download_prefix . "data.json";
         }
         $dopt = new Downloader;
         $dopt->parse_qreq($qreq);
         $dopt->set_attachment(true);
+        $dopt->set_log_user($user);
         if ($this->iszip) {
-            $this->zipdoc->add_string_as(json_encode($pj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n", $pj_filename);
+            $this->zipdoc->add_string_as(json_encode($pj, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n", $pj_filename);
             if ($this->zipdoc->prepare_download($dopt)) {
                 return $dopt;
             }
             return JsonResult::make_message_list(400, $this->zipdoc->message_list());
-        } else {
-            $dopt->set_mimetype(Mimetype::JSON_UTF8_TYPE)
-                ->set_filename($pj_filename)
-                ->set_content(json_encode($pj, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n");
-            return $dopt;
         }
+        $dopt->set_mimetype(Mimetype::JSON_UTF8_TYPE)
+            ->set_filename($pj_filename)
+            ->set_content(json_encode($pj, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+        return $dopt;
     }
 }

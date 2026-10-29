@@ -1,6 +1,6 @@
 <?php
 // pages/p_review.php -- HotCRP paper review display/edit page
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Review_Page {
     /** @var Conf */
@@ -39,7 +39,15 @@ class Review_Page {
         PaperTable::print_header($this->pt, $this->qreq, $is_error);
     }
 
-    function error_exit() {
+    /** @return never
+     * @throws PageCompletion */
+    function error_exit(FailureReason $perm) {
+        Navigation::http_response_code($perm->response_code($this->user));
+        if (!$perm->secondary || $this->conf->saved_messages_status() < 2) {
+            $perm->set("expand", true);
+            $perm->set("listViewable", $this->user->is_author() || $this->user->is_reviewer());
+            $this->conf->feedback_msg($perm->message_list());
+        }
         $this->print_header(true);
         Ht::stash_script("hotcrp.shortcut().add()");
         $this->qreq->print_footer();
@@ -62,19 +70,18 @@ class Review_Page {
         } catch (Redirection $redir) {
             throw $redir;
         } catch (FailureReason $perm) {
-            $perm->set("expand", true);
-            $perm->set("listViewable", $this->user->is_author() || $this->user->is_reviewer());
-            if (!$perm->secondary || $this->conf->saved_messages_status() < 2) {
-                $this->conf->feedback_msg($perm->message_list());
-            }
-            $this->error_exit();
+            $this->error_exit($perm);
+        }
+        // check for garbage in path
+        if ((string) $this->qreq->path_component(0) !== "") {
+            $this->error_exit(new FailureReason($this->conf, ["invalidPath" => $this->qreq->path_component(0)]));
         }
     }
 
     /** @return ?ReviewInfo */
     function my_rrow($prefer_approvable) {
         $myrrow = $apprrow1 = $apprrow2 = null;
-        $admin = $this->user->can_administer($this->prow);
+        $admin = $this->user->can_manage_reviews($this->prow);
         foreach ($this->prow->reviews_as_display() as $rrow) {
             if ($this->user->can_view_review($this->prow, $rrow)) {
                 if ($rrow->contactId === $this->user->contactId
@@ -94,9 +101,8 @@ class Review_Page {
         if (($apprrow1 || $apprrow2)
             && ($prefer_approvable || !$myrrow)) {
             return $apprrow1 ?? $apprrow2;
-        } else {
-            return $myrrow;
         }
+        return $myrrow;
     }
 
     function reload_prow() {
@@ -109,58 +115,29 @@ class Review_Page {
     }
 
     function handle_cancel() {
-        $this->conf->redirect($this->prow->hoturl([], Conf::HOTURL_RAW));
+        $this->qreq->redirect($this->prow->hoturl([]));
     }
 
     function handle_update() {
-        $rv = new ReviewValues($this->conf);
+        $rv = new ReviewValues($this->user);
+        $rv->set_link_message_fields(true);
         if ($rv->parse_qreq($this->qreq)
-            && $rv->check_and_save($this->user, $this->prow, $this->rrow)) {
+            && $rv->check_and_save($this->prow, $this->rrow)) {
             $this->qreq->r = $this->qreq->reviewId = $rv->review_ordinal_id;
         }
         $rv->report();
         if (!$rv->has_error() && !$rv->has_problem_at("ready")) {
-            $this->conf->redirect_self($this->qreq);
+            $this->qreq->redirect_self();
         }
         $this->rv = $rv;
         $this->reload_prow();
     }
 
-    function handle_upload_form() {
-        if (!$this->qreq->has_file("file")) {
-            $this->conf->error_msg("<0>File upload required");
-            return;
-        }
-        $rv = (new ReviewValues($this->conf))
-            ->set_text($this->qreq->file_content("file"), $this->qreq->file_filename("file"));
-        $match = $other = false;
-        while ($rv->set_req_override(!!$this->qreq->override)->parse_text()) {
-            if ($rv->req_pid() === $this->prow->paperId) {
-                $match = true;
-                if ($rv->check_and_save($this->user, $this->prow, $this->rrow)) {
-                    $this->qreq->r = $this->qreq->reviewId = $rv->review_ordinal_id;
-                }
-            } else {
-                $other = true;
-            }
-            $rv->clear_req();
-        }
-        if (!$match && !$other) {
-            $rv->error_at(null, "<0>Uploaded file had no valid review forms");
-        } else if (!$match) {
-            $rv->error_at(null, "<0>Uploaded form was not for this {submission}");
-        } else if ($other) {
-            $rv->warning_at(null, "<0>Reviews for other {submissions} ignored");
-            $rv->inform_at(null, "<5>Upload multiple-review files " . Ht::link("here", $this->conf->hoturl("offline")) . ".");
-        }
-        $rv->report();
-        if (!$rv->has_error()) {
-            $this->conf->redirect_self($this->qreq);
-        }
-        $this->reload_prow();
-    }
-
     function handle_download_form() {
+        if ($this->rrow === null
+            && ($fr = $this->user->perm_view_blank_review_form($this->prow))) {
+            $this->error_exit($fr);
+        }
         $filename = "review-" . ($this->rrow ? $this->rrow->unparse_ordinal_id() : $this->prow->paperId);
         $rf = $this->conf->review_form();
         $this->conf->make_text_downloader($filename)
@@ -211,7 +188,8 @@ class Review_Page {
             return;
         }
 
-        $rv = new ReviewValues($this->conf);
+        $rv = new ReviewValues($this->user);
+        $rv->set_link_message_fields(true);
         $my_rrow = $this->prow->review_by_user($this->user);
         $want_rid = $this->rrow->unparse_ordinal_id();
         if ($rv->parse_qreq($this->qreq)
@@ -220,45 +198,45 @@ class Review_Page {
             // Be careful about if_vtag_match, since vtag corresponds to
             // *subreview*, not $my_rrow
             $rv->clear_req_vtag();
-            if ($rv->check_and_save($this->user, $this->prow, $my_rrow)) {
+            if ($rv->check_and_save($this->prow, $my_rrow)) {
                 $want_rid = $rv->review_ordinal_id;
                 if (!$rv->has_problem_at("ready")) {
                     // approve the source review
-                    $rvx = new ReviewValues($this->conf);
+                    $rvx = new ReviewValues($this->user);
                     $rvx->set_req_approval("approved");
-                    $rvx->check_and_save($this->user, $this->prow, $this->rrow);
+                    $rvx->check_and_save($this->prow, $this->rrow);
                 }
             }
         }
         $rv->report();
-        $this->conf->redirect_self($this->qreq, ["r" => $want_rid]);
+        $this->qreq->redirect_self(["r" => $want_rid]);
     }
 
     function handle_delete() {
         if (!$this->rrow || !$this->rrow_explicit) {
             $this->conf->error_msg("<0>Review not found");
             return;
-        } else if (!$this->user->can_administer($this->prow)) {
+        } else if (!$this->user->can_manage_reviews($this->prow)) {
             return;
         }
-        if ($this->rrow->delete($this->user)) {
+        if ($this->rrow->delete($this->user, ["no_rights" => true, "snapshot" => true])) {
             $this->conf->success_msg("<0>Review deleted");
         }
-        $this->conf->redirect_self($this->qreq, ["r" => null, "reviewId" => null]);
+        $this->qreq->redirect_self(["r" => null, "reviewId" => null]);
     }
 
     function handle_unsubmit() {
         if (!$this->rrow
             || $this->rrow->reviewStatus < ReviewInfo::RS_DELIVERED
-            || !$this->user->can_administer($this->prow)) {
+            || !$this->user->can_manage_reviews($this->prow)) {
             return;
         }
-        $rv = new ReviewValues($this->conf);
+        $rv = new ReviewValues($this->user);
         $rv->set_can_unsubmit(true)->set_req_ready(false);
-        if ($rv->check_and_save($this->user, $this->prow, $this->rrow)) {
+        if ($rv->check_and_save($this->prow, $this->rrow)) {
             $this->conf->success_msg("<0>Review unsubmitted");
         }
-        $this->conf->redirect_self($this->qreq);
+        $this->qreq->redirect_self();
     }
 
     function handle_valid_post() {
@@ -271,8 +249,6 @@ class Review_Page {
             $this->handle_update();
         } else if ($qreq->adoptreview) {
             $this->handle_adopt();
-        } else if ($qreq->upload) {
-            $this->handle_upload_form();
         } else if ($qreq->unsubmitreview) {
             $this->handle_unsubmit();
         } else if ($qreq->deletereview) {
@@ -282,10 +258,9 @@ class Review_Page {
 
     /** @return ?int */
     function current_capability_rrid() {
-        if (($capuid = $this->user->reviewer_capability($this->prow))) {
-            $u = $this->conf->user_by_id($capuid, USER_SLICE);
-            $rrow = $this->prow->review_by_user($capuid);
-            $refs = $u ? $this->prow->review_refusals_by_user($u) : [];
+        if (($capu = $this->user->reviewer_capability_user($this->prow))) {
+            $rrow = $this->prow->review_by_user($capu->contactId);
+            $refs = $this->prow->review_refusals_by_user($capu);
             if ($rrow && (!$this->rrow || $this->rrow === $rrow)) {
                 return $rrow->reviewId;
             } else if (!$rrow && !empty($refs) && $refs[0]->refusedReviewId > 0) {
@@ -295,12 +270,12 @@ class Review_Page {
         return null;
     }
 
-    function add_capability_user_message($capuid) {
-        if (($u = $this->conf->user_by_id($capuid, USER_SLICE))) {
+    function add_capability_user_message() {
+        if (($u = $this->user->reviewer_capability_user($this->prow))) {
             if (PaperRequest::simple_qreq($this->qreq)
                 && ($i = Contact::session_index_by_email($this->qreq, $u->email)) >= 0) {
-                $selfurl = $this->conf->selfurl($this->qreq, null, Conf::HOTURL_SITEREL | Conf::HOTURL_RAW);
-                $this->conf->redirect($this->qreq->navigation()->base_absolute() . "u/{$i}/{$selfurl}");
+                $selfurl = $this->conf->selfurl($this->qreq, null, Conf::HOTURL_SITEREL);
+                $this->qreq->redirect($this->qreq->navigation()->base_absolute() . "u/{$i}/{$selfurl}");
                 return;
             }
 
@@ -326,8 +301,16 @@ class Review_Page {
                     $m = "<5>{$mx}";
                 }
             } else {
-                $m = "<5>You’re accessing this review using a special link for reviewer {$hemail}. " . Ht::link("Sign in to the site", $this->conf->hoturl("signin", ["email" => $u->email, "cap" => null]), ["class" => "nw"]);
+                $m = "<5>You’re accessing this review using a special link for reviewer {$hemail}. " . $this->conf->hotlink("Sign in to the site", "signin", ["email" => $u->email, "cap" => null], ["class" => "nw"]);
             }
+            $this->pt()->add_pre_status_feedback(MessageItem::warning_note($m));
+
+            if ($u->can_view_submitted_review($this->prow)
+                && !$this->user->can_view_submitted_review($this->prow)) {
+                $this->pt()->add_pre_status_feedback(MessageItem::warning_note("<0>More review information may become visible when you sign in as {$u->email}."));
+            }
+        } else {
+            $m = $this->conf->_("<0>Your reviewer link is no longer active");
             $this->pt()->add_pre_status_feedback(MessageItem::warning_note($m));
         }
     }
@@ -341,7 +324,7 @@ class Review_Page {
         if ($this->rv) {
             $pt->set_review_values($this->rv);
         } else if ($this->qreq->has_annex("after_login")) {
-            $rv = new ReviewValues($this->conf);
+            $rv = new ReviewValues($this->user);
             $rv->parse_qreq($this->qreq);
             $pt->set_review_values($rv);
         }
@@ -354,17 +337,18 @@ class Review_Page {
             && !($this->rrow
                  ? $this->user->can_edit_review($this->prow, $this->rrow)
                  : $this->user->can_create_review($this->prow, $this->user))) {
-            $pt->paptabEndWithReviewMessage();
+            $pt->print_no_reviews_message();
         } else {
             if ($pt->mode === "re" || $this->rrow) {
                 $pt->print_review_form(); // might just render review
                 $pt->print_main_link();
             } else {
-                $pt->paptabEndWithReviewsAndComments();
+                $pt->print_prepare_reviews();
             }
         }
 
         echo "</article>\n";
+        $pt->print_finish_reviews();
         $this->qreq->print_footer();
     }
 
@@ -374,11 +358,7 @@ class Review_Page {
             $qreq->m = $qreq->mode;
         }
         if ($qreq->post && $qreq->default) {
-            if ($qreq->has_file("file")) {
-                $qreq->upload = 1;
-            } else {
-                $qreq->update = 1;
-            }
+            $qreq->update = 1;
         }
         if ($user->is_reviewer()) {
             $qreq->open_session();
@@ -386,9 +366,6 @@ class Review_Page {
 
         $pp = new Review_Page($user, $qreq);
         $pp->load_prow();
-
-        // fix user
-        $capuid = $user->reviewer_capability($pp->prow);
 
         // action
         if ($qreq->cancel) {
@@ -402,11 +379,12 @@ class Review_Page {
         }
 
         // capability may accept to different user
+        $capuid = $user->reviewer_capability($pp->prow);
         if ($capuid
             && $pp->rrow
             && $capuid === $pp->rrow->contactId
             && $capuid !== $user->contactXid) {
-            $pp->add_capability_user_message($capuid);
+            $pp->add_capability_user_message();
         }
 
         $pp->print();

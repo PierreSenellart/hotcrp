@@ -1,6 +1,6 @@
 <?php
 // a_sharing.php -- HotCRP assignment helper classes
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 use AuthorView_Capability as AVToken;
 
@@ -68,11 +68,12 @@ class Sharing_AssignmentParser extends UserlessAssignmentParser {
         Dbl::free($result);
     }
     function allow_paper(PaperInfo $prow, AssignmentState $state) {
-        if ($state->user->can_administer($prow)
-            || $prow->has_author($state->user)) {
-            return true;
+        if (($fr = $state->user->perm_scope_allows(TokenScope::S_SUB_ADMIN, $prow)
+                   ?? $state->user->perm_allow_edit_paper($prow))) {
+            $state->paper_error($fr);
+            return false;
         }
-        return new AssignmentError("<0>Permission error");
+        return true;
     }
     function apply(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
         $ia = 0;
@@ -90,7 +91,7 @@ class Sharing_AssignmentParser extends UserlessAssignmentParser {
                 if (($x = SettingParser::parse_duration($req["expires_in"])) === null) {
                     return new AssignmentError("<0>Parameter error on ‘expires_in’");
                 }
-                $ia = $x >= 0 ? Conf::$now + (int) round($x) : 0;
+                $ia = $x > 0 ? Conf::$now + (int) round($x) : 0;
                 $has_ia = true;
             }
         }
@@ -120,12 +121,8 @@ class Sharing_Assigner extends Assigner {
     static function make(AssignmentItem $item, AssignmentState $state) {
         return new Sharing_Assigner($item, $state);
     }
-    /** @param int $decid */
-    static function decision_html(Conf $conf, $decid) {
-        $dec = $conf->decision_set()->get($decid);
-        $class = $dec->status_class();
-        $name_h = $dec->id === 0 ? "No decision" : $dec->name_as(5);
-        return "<span class=\"pstat {$class}\">{$name_h}</span>";
+    function about() {
+        return 0;
     }
     function unparse_display(AssignmentSet $aset) {
         if ($this->item->deleted()) {

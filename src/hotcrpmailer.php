@@ -1,12 +1,16 @@
 <?php
 // hotcrpmailer.php -- HotCRP mail template manager
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class HotCRPMailPreparation extends MailPreparation {
+    /** @var ?PaperInfo */
+    public $prow;
     /** @var int */
-    public $paperId = -1;
+    public $recipient_class = 0;
     /** @var bool */
-    public $author_recipient = false;
+    public $reviewer_recipient = false;
+    /** @var bool */
+    public $administrator_recipient = false;
     /** @var int */
     public $paper_expansions = 0;
     /** @var int */
@@ -25,14 +29,37 @@ class HotCRPMailPreparation extends MailPreparation {
         return parent::can_merge($p)
             && $p instanceof HotCRPMailPreparation
             && $this->combination_type === $p->combination_type
-            && (($this->combination_type === 2
+            && (($this->combination_type === HotCRPMailer::COMBINE_GROUP
                  && !$this->paper_expansions
                  && !$p->paper_expansions)
-                || ($this->author_recipient === $p->author_recipient
-                    && $this->combination_type != 0
-                    && $this->paperId === $p->paperId)
-                || ($this->author_recipient === $p->author_recipient
+                || ($this->recipient_class === $p->recipient_class
+                    && ($this->recipient_class !== 0
+                        || !$this->paper_expansions)
+                    && $this->combination_type !== 0
+                    && $this->prow === $p->prow
+                    && $this->mutually_visible_recipients($p))
+                || ($this->recipient_class === $p->recipient_class
                     && $this->has_same_recipients($p)));
+    }
+    /** Return true unless merging would show a paper's reviewers identities
+     * they may not see.
+     * @param HotCRPMailPreparation $p
+     * @return bool */
+    private function mutually_visible_recipients($p) {
+        if ($this->recipient_class !== HotCRPMailer::RCLASS_REVIEWER
+            || !$this->prow) {
+            return true;
+        }
+        foreach ($this->recipients() as $ui) {
+            foreach ($p->recipients() as $uj) {
+                if ($ui->contactId !== $uj->contactId
+                    && (!$this->prow->can_view_review_identity_of($uj->contactId, $ui)
+                        || !$this->prow->can_view_review_identity_of($ui->contactId, $uj))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
     function finalize() {
         parent::finalize();
@@ -46,8 +73,12 @@ class HotCRPMailPreparation extends MailPreparation {
 class HotCRPMailer extends Mailer {
     /** @var array<string,Contact|Author> */
     protected $contacts = [];
-    /** @var ?Contact */
+    /** @var Contact */
+    protected $permreceiver;
+    /** @var ContactPermissions */
     protected $permuser;
+    /** @var ?MailRecipients */
+    protected $recip_set;
 
     /** @var ?PaperInfo */
     protected $row;
@@ -60,7 +91,9 @@ class HotCRPMailer extends Mailer {
     /** @var ?int */
     protected $newrev_since;
     /** @var bool */
-    protected $no_send = false;
+    protected $preview = false;
+    /** @var bool */
+    protected $sender_visible = false;
     /** @var int */
     public $combination_type = 0;
     /** @var ?string */
@@ -68,11 +101,22 @@ class HotCRPMailer extends Mailer {
 
     protected $_statistics = null;
 
+    const RCLASS_NONE = 0;
+    const RCLASS_AUTHOR = 1;
+    const RCLASS_REVIEWER = 2;
+    const RCLASS_ADMIN = 3;
+
+    const COMBINE_NONE = 0;     // combine only identical recipients
+    const COMBINE_PAPER = 1;    // combine across mutually-visible recipients
+    const COMBINE_GROUP = 2;    // COMBINE_PAPER *and* combine if message has
+                                // no paper-specific information
+
+
 
     /** @param ?Contact $recipient
-     * @param array{prow?:PaperInfo,rrow?:ReviewInfo,requester_contact?:Contact,reviewer_contact?:Contact} $rest */
-    function __construct(Conf $conf, $recipient = null, $rest = []) {
-        parent::__construct($conf);
+     * @param array{prow?:PaperInfo,rrow?:ReviewInfo,requester_contact?:Contact,reviewer_contact?:Contact,other_contact?:Contact} $rest */
+    function __construct(Contact $permsender, $recipient = null, $rest = []) {
+        parent::__construct($permsender);
         $this->reset($recipient, $rest);
         if (isset($rest["combination_type"])) {
             $this->combination_type = $rest["combination_type"];
@@ -95,11 +139,13 @@ class HotCRPMailer extends Mailer {
         $this->comment_row = $rest["comment_row"] ?? null;
         $this->newrev_since = $rest["newrev_since"] ?? null;
         $this->rrow_unsubmitted = !!($rest["rrow_unsubmitted"] ?? false);
-        $this->no_send = !!($rest["no_send"] ?? false);
+        $this->preview = !!($rest["preview"] ?? false);
+        assert($this->censor !== self::CENSOR_PREVIEW || $this->preview);
+        $this->sender_visible = !!($rest["sender_visible"] ?? false);
         if (($rest["author_permission"] ?? false) && $this->row) {
-            $this->permuser = $this->row->author_user();
+            $this->permreceiver = $this->row->author_user();
         } else {
-            $this->permuser = $this->recipient;
+            $this->permreceiver = $this->recipient;
         }
         $this->_unexpanded_paper_keyword = null;
         // Infer reviewer contact from rrow/comment_row
@@ -110,11 +156,25 @@ class HotCRPMailer extends Mailer {
                 $this->contacts["reviewer"] = $this->comment_row->commenter();
             }
         }
+        // Create `permuser`. Bound the expansion by the sending user’s
+        // permissions only if the sending user, or someone they chose, will
+        // read this copy; a conference-configured cc/bcc is not their choice.
+        if ($this->censor === self::CENSOR_PREVIEW || $this->sender_visible) {
+            $this->permuser = ContactIntersection::make($this->permsender, $this->permreceiver);
+        } else {
+            $this->permuser = $this->permreceiver;
+        }
         // Do not put passwords in email that is cc'd elsewhere
         if ((($rest["cc"] ?? null) || ($rest["bcc"] ?? null))
-            && (!$this->censor || $this->censor === self::CENSOR_DISPLAY)) {
+            && (!$this->censor || $this->censor === self::CENSOR_PREVIEW)) {
             $this->censor = self::CENSOR_ALL;
         }
+    }
+
+    /** @return $this */
+    function set_recip_set(?MailRecipients $recip_set) {
+        $this->recip_set = $recip_set;
+        return $this;
     }
 
 
@@ -125,15 +185,13 @@ class HotCRPMailer extends Mailer {
         }
         if ($this->row
             && $this->rrow
-            && $this->conf->is_review_blind((bool) $this->rrow->reviewBlind)
             && !$this->permuser->can_view_review_identity($this->row, $this->rrow)) {
             if ($isbool) {
                 return false;
             } else if ($this->context == self::CONTEXT_EMAIL) {
                 return "<hidden>";
-            } else {
-                return "Hidden for anonymous review";
             }
+            return "Hidden for anonymous review";
         }
         return $this->expand_user($c, $type);
     }
@@ -144,9 +202,9 @@ class HotCRPMailer extends Mailer {
     }
 
     private function get_reviews() {
-        $old_overrides = $this->permuser->overrides();
+        $old_overrides = $this->permreceiver->overrides();
         if ($this->conf->_au_seerev === null) { /* assume sender wanted to override */
-            $this->permuser->add_overrides(Contact::OVERRIDE_AU_SEEREV);
+            $this->permreceiver->add_overrides(Contact::OVERRIDE_AU_SEEREV);
         }
         assert(($old_overrides & contact::OVERRIDE_CONFLICT) === 0);
 
@@ -160,28 +218,31 @@ class HotCRPMailer extends Mailer {
         $text = "";
         $rf = $this->conf->review_form();
         foreach ($rrows as $rrow) {
-            if (($rrow->reviewStatus >= ReviewInfo::RS_COMPLETED
-                 || ($rrow === $this->rrow && $this->rrow_unsubmitted))
-                && $this->permuser->can_view_review($this->row, $rrow)) {
-                if ($text !== "") {
-                    $text .= "\n\n*" . str_repeat(" *", 37) . "\n\n\n";
-                }
-                $flags = ReviewForm::UNPARSE_NO_TITLE;
-                if ($this->no_send) {
-                    $flags |= ReviewForm::UNPARSE_NO_AUTHOR_SEEN;
-                }
-                $text .= $rf->unparse_text($this->row, $rrow, $this->permuser, $flags);
+            // skip incomplete or nonviewable reviews
+            if (($rrow->reviewStatus < ReviewInfo::RS_COMPLETED
+                 && ($rrow !== $this->rrow || !$this->rrow_unsubmitted))
+                || !$this->permuser->can_view_review($this->row, $rrow)) {
+                continue;
             }
+            // render
+            if ($text !== "") {
+                $text .= "\n\n*" . str_repeat(" *", 37) . "\n\n\n";
+            }
+            $flags = ReviewForm::UNPARSE_NO_TITLE;
+            if ($this->preview) {
+                $flags |= ReviewForm::UNPARSE_NO_AUTHOR_SEEN;
+            }
+            $text .= $rf->unparse_text($this->row, $rrow, $this->permuser, $flags);
         }
 
-        $this->permuser->set_overrides($old_overrides);
+        $this->permreceiver->set_overrides($old_overrides);
         return $text;
     }
 
     private function get_comments($tag) {
-        $old_overrides = $this->permuser->overrides();
+        $old_overrides = $this->permreceiver->overrides();
         if ($this->conf->_au_seerev === null) { /* assume sender wanted to override */
-            $this->permuser->add_overrides(Contact::OVERRIDE_AU_SEEREV);
+            $this->permreceiver->add_overrides(Contact::OVERRIDE_AU_SEEREV);
         }
         assert(($old_overrides & Contact::OVERRIDE_CONFLICT) === 0);
 
@@ -192,8 +253,14 @@ class HotCRPMailer extends Mailer {
         }
 
         $crows = array_filter($crows, function ($crow) use ($tag) {
-            return (!$tag || $crow->has_tag($tag))
-                && $this->permuser->can_view_comment($this->row, $crow);
+            if (!$this->permuser->can_view_comment($this->row, $crow)
+                || ($tag && !$crow->has_tag($tag))) {
+                return false;
+            } else if (!$tag || $this->permsender->privChair) {
+                return true;
+            }
+            return $this->permsender->can_view_comment_tags($this->row, $crow)
+                && $this->permsender->can_view_tag($this->row, $tag);
         });
 
         $flags = ReviewForm::UNPARSE_NO_TITLE | ReviewForm::UNPARSE_TRUNCATE;
@@ -211,51 +278,53 @@ class HotCRPMailer extends Mailer {
             $text .= $crow->unparse_text($this->permuser, $flags);
         }
 
-        $this->permuser->set_overrides($old_overrides);
+        $this->permreceiver->set_overrides($old_overrides);
         return $text;
     }
 
-    const GA_SINCE = 1;
-    const GA_ROUND = 2;
-    const GA_NEEDS_SUBMIT = 4;
-
     /** @param Contact $user
-     * @param int $flags
      * @param ?int $review_round
      * @return string */
-    private function get_assignments($user, $flags, $review_round) {
-        $where = [
-            "r.contactId={$user->contactId}",
-            "p.timeSubmitted>0"
-        ];
-        if (($flags & self::GA_SINCE) !== 0) {
-            $where[] = "r.timeRequested>r.timeRequestNotified";
-            if ($this->newrev_since) {
-                $where[] = "r.timeRequested>={$this->newrev_since}";
+    private function get_assignments($user, $review_round) {
+        $lines = [];
+        foreach ($this->recip_set->paper_set(true) as $prow) {
+            foreach ($this->recip_set->reviews_for_recipient($prow, $user) as $rrow) {
+                if ($review_round === null
+                    || $rrow->reviewRound === $review_round) {
+                    $lines[] = "#{$prow->paperId} {$prow->title()}";
+                    break;
+                }
             }
         }
-        if (($flags & self::GA_NEEDS_SUBMIT) !== 0) {
-            $where[] = "r.reviewSubmitted is null";
-            $where[] = "r.reviewNeedsSubmit!=0";
+        return join("\n", $lines);
+    }
+
+    function kw_assignments($args, $isbool, $uf) {
+        if (!$this->recip_set
+            || !$this->recip_set->user->is_manager()) {
+            return $isbool ? false : null;
         }
-        if (($flags & self::GA_ROUND) !== 0 && $review_round !== null) {
-            $where[] = "r.reviewRound={$review_round}";
+        $round = null;
+        if ($args || isset($uf->match_data)) {
+            $rname = trim(isset($uf->match_data) ? $uf->match_data[1] : $args);
+            $round = $this->conf->round_number($rname);
+            if ($round === null) {
+                return $isbool ? false : null;
+            }
         }
-        $result = $this->conf->qe("select r.paperId, p.title
-                from PaperReview r join Paper p using (paperId)
-                where " . join(" and ", $where) . " order by r.paperId");
-        $text = "";
-        while (($row = $result->fetch_row())) {
-            $text .= ($text ? "\n#" : "#") . $row[0] . " " . $row[1];
-        }
-        Dbl::free($result);
-        return $text;
+        return $this->get_assignments($this->recipient, $round);
     }
 
 
     private function guess_reviewdeadline() {
         if ($this->rrow) {
+            if (!$this->permuser->can_view_review_meta($this->row, $this->rrow)) {
+                return null;
+            }
             return $this->rrow->deadline_name();
+        }
+        if (!$this->recipient) {
+            return null;
         }
         if ($this->row
             && ($rrows = $this->row->reviews_by_user($this->recipient))) {
@@ -275,7 +344,7 @@ class HotCRPMailer extends Mailer {
                 return ($rrow1 ?? $rrow0)->deadline_name();
             }
         }
-        if (!$this->recipient || !$this->recipient->isPC) {
+        if (!$this->recipient->isPC) {
             return null;
         }
         $bestdl = $bestdln = null;
@@ -295,21 +364,37 @@ class HotCRPMailer extends Mailer {
     }
 
     function kw_deadline($args, $isbool, $uf) {
-        if ($uf->is_review && $args) {
-            $args .= "rev_soft";
-        } else if ($uf->is_review) {
-            $args = $this->guess_reviewdeadline();
+        if ($uf->is_review) {
+            if ($args === "pc" || $args === "ext") {
+                $args .= "rev_soft";
+            } else {
+                $args = $this->guess_reviewdeadline();
+            }
+        } else if (!in_array($args, ["pcrev_soft", "extrev_soft", "pcrev_hard", "extrev_hard"], true)) {
+            $args = null;
         }
+        if (!$args) {
+            return $isbool ? false : null;
+        }
+        $t = $this->conf->setting($args);
+        if ($t === null && str_starts_with($args, "extrev_")) {
+            $t = $this->conf->setting("pcrev_" . substr($args, 7));
+        }
+        $t = $t ?? 0;
         if ($isbool) {
-            return $args && $this->conf->setting($args) > 0;
+            return $t > 0;
         } else if ($args) {
-            $t = $this->conf->setting($args) ?? 0;
             return $this->conf->unparse_time_long($t);
         }
         return null;
     }
 
     function kw_statistic($args, $isbool, $uf) {
+        if ($uf->statindex === 1
+            && !$this->permsender->privChair
+            && !$this->permsender->can_view_all_decision()) {
+            return null;
+        }
         if ($this->_statistics === null) {
             $this->_statistics = $this->conf->count_submitted_accepted();
         }
@@ -325,24 +410,6 @@ class HotCRPMailer extends Mailer {
             return $this->expand_user($u, $uf->match_data[2]);
         }
         return $isbool ? false : null;
-    }
-
-    function kw_assignments($args, $isbool, $uf) {
-        $flags = 0;
-        $round = null;
-        if ($args || isset($uf->match_data)) {
-            $rname = trim(isset($uf->match_data) ? $uf->match_data[1] : $args);
-            $round = $this->conf->round_number($rname);
-            if ($round === null) {
-                return $isbool ? false : null;
-            }
-            $flags |= self::GA_ROUND;
-        }
-        return $this->get_assignments($this->recipient, $flags, $round);
-    }
-
-    function kw_newassignments() {
-        return $this->get_assignments($this->recipient, self::GA_SINCE | self::GA_NEEDS_SUBMIT, null);
     }
 
     function kw_haspaper($uf = null, $name = null) {
@@ -388,7 +455,7 @@ class HotCRPMailer extends Mailer {
         return $this->row->title;
     }
     function kw_titlehint() {
-        if (($tw = UnicodeHelper::utf8_abbreviate($this->row->title, 40))) {
+        if (($tw = UnicodeHelper::utf8_word_abbreviate($this->row->title, 40))) {
             return "\"{$tw}\"";
         }
         return "";
@@ -400,9 +467,7 @@ class HotCRPMailer extends Mailer {
         return $this->row->paperId;
     }
     function kw_authors($args, $isbool) {
-        if (!$this->permuser->is_root_user()
-            && !$this->permuser->can_view_authors($this->row)
-            && !$this->permuser->act_author_view($this->row)) {
+        if (!$this->permuser->can_view_authors($this->row)) {
             return $isbool ? false : "Hidden for anonymous review";
         }
         $t = [];
@@ -432,65 +497,124 @@ class HotCRPMailer extends Mailer {
             || !$this->row->has_author($this->recipient)) {
             return null;
         }
+        // Only an administrator of the submission may put an author-view link
+        // in text they control; otherwise a sender could mint a token for a
+        // paper they are not entitled to share.
+        if (!$this->permsender->allow_admin($this->row)) {
+            return null;
+        }
         $tok = AuthorView_Capability::make($this->row);
         if ($tok === null) {
             return "";
         } else if (!$this->censor) {
             return "cap={$tok->salt}";
-        } else if ($this->censor === self::CENSOR_DISPLAY) {
+        } else if ($this->censor === self::CENSOR_PREVIEW) {
             return "cap=HIDDEN";
         }
         return null;
     }
+
     function kw_decision($args, $isbool) {
-        if ($this->row->outcome === 0 && $isbool) {
+        $outcome = $this->row->outcome;
+        if ($outcome !== 0
+            && !$this->permsender->can_view_decision($this->row)
+            && ($this->censor !== self::CENSOR_NONE
+                || !$this->permsender->privChair)) {
+            $outcome = 0;
+        }
+        if ($outcome === 0 && $isbool) {
             return false;
         }
-        return $this->row->decision()->name;
+        return $this->conf->decision_set()->get($outcome)->name;
     }
+
     function kw_tagvalue($args, $isbool, $uf) {
         $tag = isset($uf->match_data) ? $uf->match_data[1] : $args;
-        $tag = $this->tagger()->check($tag, Tagger::NOVALUE | Tagger::NOPRIVATE);
+        $tag = $this->tagger()->check_syntax($tag, Tagger::NOVALUE | Tagger::NOPRIVATE);
         if (!$tag) {
             return null;
         }
-        $value = $this->row->tag_value($tag);
-        if ($isbool) {
-            return $value !== null;
-        } else if ($value !== null) {
-            return (string) $value;
+        if (!$this->permsender->can_view_tag($this->row, $tag)) {
+            if ($isbool) {
+                return false;
+            }
+            $this->warning("<0>You aren’t allowed to view the ‘{$tag}’ tag for submission #{$this->row->paperId}");
+            return "HIDDEN";
         }
-        $this->warning("<0>Submission #{$this->row->paperId} has no #{$tag} tag");
-        return "(none)";
+        $value = $this->row->tag_value($tag);
+        if ($value === null) {
+            if ($isbool) {
+                return false;
+            }
+            $this->warning("<0>Submission #{$this->row->paperId} has no ‘{$tag}’ tag");
+            return "(none)";
+        }
+        if ($uf->session ?? false) {
+            $ti = $this->conf->tags()->find($tag);
+            $ta = $ti ? $ti->order_anno_search($value) : null;
+            if ($isbool) {
+                return $ta && !$ta->is_fencepost();
+            }
+            if (!$ta || $ta->is_fencepost()) {
+                $this->warning("<0>Tag ‘{$tag}#{$value}’ is not a session tag");
+                return "(none)";
+            }
+            $st = [];
+            if (($title = $ta->prop("session_title") ? : $ta->heading)) {
+                $st[] = "* Session: {$title}";
+            }
+            if (($time = $ta->prop("time"))) {
+                $st[] = "* Session time: {$time}";
+            }
+            if (empty($st)) {
+                $st[] = "(none)";
+            }
+            return join("\n", $st);
+        }
+        if ($isbool) {
+            return true;
+        }
+        return (string) $value;
     }
+
     function kw_is_paperfield($uf) {
         $uf->option = $this->conf->options()->find($uf->match_data[1]);
         return !!$uf->option && $uf->option->published(FieldRender::CFMAIL);
     }
+
     function kw_paperfield($args, $isbool, $uf) {
-        if (!$this->permuser->can_view_option($this->row, $uf->option)
-            || !($ov = $this->row->option($uf->option))) {
+        if (!$this->permuser->can_view_option($this->row, $uf->option)) {
+            return $isbool ? false : ($this->censor !== self::CENSOR_NONE ? "HIDDEN" : "");
+        } else if (!($ov = $this->row->option_present($uf->option))) {
             return $isbool ? false : "";
         }
-        $fr = new FieldRender(FieldRender::CFTEXT | FieldRender::CFMAIL, $this->permuser);
+        $fr = new FieldRender(FieldRender::CFTEXT | FieldRender::CFMAIL, $this->permreceiver);
         $uf->option->render($fr, $ov);
         if ($isbool) {
             return ($fr->value ?? "") !== "";
         }
         return (string) $fr->value;
     }
-    function kw_paperpc($args, $isbool, $uf) {
-        $k = "{$uf->pctype}ContactId";
-        $cid = $this->row->$k;
-        if ($cid > 0 && ($u = $this->conf->user_by_id($cid, USER_SLICE))) {
+
+    function kw_shepherd($args, $isbool, $uf) {
+        $is_email = $this->context === self::CONTEXT_EMAIL
+            || $uf->userx === "EMAIL";
+        $cid = $this->row->shepherdContactId;
+        if ($cid > 0
+            && !$this->permsender->can_view_shepherd($this->row)
+            && ($this->censor !== self::CENSOR_NONE
+                || !$this->permsender->privChair)) {
+            if ($isbool) {
+                return false;
+            }
+            return $is_email ? "<hidden>" : "HIDDEN";
+        } else if ($cid > 0
+                   && ($u = $this->conf->user_by_id($cid, USER_SLICE))) {
             return $this->expand_user($u, $uf->userx);
         } else if ($isbool)  {
             return false;
-        } else if ($this->context === self::CONTEXT_EMAIL
-                   || $uf->userx === "EMAIL") {
-            return "<none>";
         }
-        return "(no {$uf->pctype} assigned)";
+        return $is_email ? "<none>" : "(no shepherd assigned)";
     }
     function kw_reviewname($args) {
         $s = $args === "SUBJECT";
@@ -523,7 +647,7 @@ class HotCRPMailer extends Mailer {
     function kw_comments($args, $isbool) {
         $tag = null;
         if ($args === ""
-            || ($tag = $this->tagger()->check($args, Tagger::NOVALUE))) {
+            || ($tag = $this->tagger()->check_syntax($args, Tagger::NOVALUE))) {
             return $this->get_comments($tag);
         }
         return null;
@@ -534,6 +658,11 @@ class HotCRPMailer extends Mailer {
         if ($kw === $this->_unexpanded_paper_keyword) {
             return "<0>‘{$xref}’ keyword ignored because this mail isn’t linked to submissions or reviews";
         } else if (preg_match('/\AAUTHORVIEWCAPABILITY/', $kw)) {
+            if ($this->row
+                && $this->row->has_author($this->recipient)
+                && !$this->permsender->allow_admin($this->row)) {
+                return "<0>‘{$xref}’ keyword ignored because only administrators can send author-view links";
+            }
             return "<0>‘{$xref}’ keyword ignored because this mail isn’t meant for submission authors";
         }
         return parent::handle_unexpanded_keyword($kw, $xref);
@@ -544,8 +673,14 @@ class HotCRPMailer extends Mailer {
         assert($this->recipient && $this->recipient->email);
         $prep = new HotCRPMailPreparation($this->conf, $this->recipient);
         if ($this->row && ($this->row->paperId ?? 0) > 0) {
-            $prep->paperId = $this->row->paperId;
-            $prep->author_recipient = $this->row->has_author($this->recipient);
+            $prep->prow = $this->row;
+            if ($this->row->has_author($this->recipient)) {
+                $prep->recipient_class = HotCRPMailer::RCLASS_AUTHOR;
+            } else if ($this->row->has_active_reviewer($this->recipient)) {
+                $prep->recipient_class = HotCRPMailer::RCLASS_REVIEWER;
+            } else if ($this->recipient->allow_admin($this->row)) {
+                $prep->recipient_class = HotCRPMailer::RCLASS_ADMIN;
+            }
         }
         $prep->combination_type = $this->combination_type;
         $this->populate_preparation($prep, $template, $rest);
@@ -554,22 +689,13 @@ class HotCRPMailer extends Mailer {
 
 
     /** @param Contact $recipient
-     * @param PaperInfo $prow
-     * @param ?ReviewInfo $rrow
-     * @return bool */
-    static function check_can_view_review($recipient, $prow, $rrow) {
-        assert(!($recipient->overrides() & Contact::OVERRIDE_CONFLICT));
-        return $recipient->can_view_review($prow, $rrow);
-    }
-
-    /** @param Contact $recipient
      * @return ?HotCRPMailPreparation */
     static function prepare_to($recipient, $template, $rest = []) {
         if ($recipient->is_dormant()) {
             return null;
         }
         $old_overrides = $recipient->remove_overrides(Contact::OVERRIDE_CONFLICT);
-        $mailer = new HotCRPMailer($recipient->conf, $recipient, $rest);
+        $mailer = new HotCRPMailer($recipient->conf->root_user(), $recipient, $rest);
         $answer = $mailer->prepare($template, $rest);
         $recipient->set_overrides($old_overrides);
         return $answer;
@@ -590,7 +716,7 @@ class HotCRPMailer extends Mailer {
     static function send_contacts($template, $row, $rest = []) {
         $preps = $aunames = [];
         $rest["prow"] = $row;
-        $rest["combination_type"] = 1;
+        $rest["combination_type"] = HotCRPMailer::COMBINE_PAPER;
         $rest["author_permission"] = true;
         foreach ($row->contact_followers() as $minic) {
             assert(empty($minic->review_tokens()));
@@ -616,7 +742,7 @@ class HotCRPMailer extends Mailer {
     static function send_administrators($template, $row, $rest = []) {
         $preps = [];
         $rest["prow"] = $row;
-        $rest["combination_type"] = 1;
+        $rest["combination_type"] = HotCRPMailer::COMBINE_PAPER;
         foreach ($row->administrators() as $u) {
             if (($p = self::prepare_to($u, $template, $rest))) {
                 $preps[] = $p;

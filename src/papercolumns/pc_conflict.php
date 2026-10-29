@@ -1,6 +1,6 @@
 <?php
 // pc_conflict.php -- HotCRP conflict list column
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Conflict_PaperColumn extends PaperColumn {
     /** @var ?Contact */
@@ -69,15 +69,22 @@ class Conflict_PaperColumn extends PaperColumn {
             && !$pl->user->can_view_authors($row)) {
             $ct = Conflict::CT_DEFAULT;
         }
+        // only a manager editing conflicts sorts pinned conflicts separately
+        if (($ct & Conflict::F_PIN) !== 0
+            && (!$this->editable
+                || !$pl->user->allow_manage($row))) {
+            $ct &= ~Conflict::F_PIN;
+        }
         return $ct;
     }
     function compare(PaperInfo $a, PaperInfo $b, PaperList $pl) {
         $act = $this->conflict_type($pl, $a);
         $bct = $this->conflict_type($pl, $b);
-        if ($this->description) {
+        if ($this->description || $this->editable) {
             return $act <=> $bct;
         }
-        return ($act ? 1 : 0) <=> ($bct ? 1 : 0);
+        return ($act > CONFLICT_MAXUNCONFLICTED ? 1 : 0)
+            <=> ($bct > CONFLICT_MAXUNCONFLICTED ? 1 : 0);
     }
     function header(PaperList $pl, $is_text) {
         if ((!$this->show_user && !$this->not_me && !$this->editable)
@@ -108,7 +115,7 @@ class Conflict_PaperColumn extends PaperColumn {
         return $this->cset->unparse_html(min($ct, CONFLICT_AUTHOR));
     }
     private function edit_content(PaperList $pl, PaperInfo $row) {
-        if (!$pl->user->allow_administer($row)) {
+        if (!$pl->user->allow_manage($row)) {
             return "";
         }
         $ct = $row->conflict_type($this->user);
@@ -190,7 +197,7 @@ class Conflict_PaperColumn extends PaperColumn {
             }
         }
         if (empty($rs)) {
-            PaperColumn::column_error($xtp, "<0>PC member ‘{$m[2]}’ not found");
+            PaperColumn::column_error_at($xtp, $name, "<0>PC member ‘{$m[2]}’ not found");
         }
         return $rs;
     }

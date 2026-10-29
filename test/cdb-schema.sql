@@ -16,7 +16,7 @@ CREATE TABLE `Capability` (
   `data` varbinary(8192) DEFAULT NULL,
   `dataOverflow` longblob DEFAULT NULL,
   PRIMARY KEY (`salt`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 
@@ -29,7 +29,7 @@ CREATE TABLE `Conferences` (
   `confid` int NOT NULL AUTO_INCREMENT,
   `confuid` varbinary(64) DEFAULT NULL,
   PRIMARY KEY (`confid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 --
@@ -41,7 +41,31 @@ CREATE TABLE `ConferenceUpdates` (
   `confid` int NOT NULL,
   `user_update_at` bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (`confid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+
+--
+-- Table structure for table `ContactCounter`
+--
+
+DROP TABLE IF EXISTS `ContactCounter`;
+CREATE TABLE `ContactCounter` (
+  `contactId` int NOT NULL,
+  `apiCount` bigint NOT NULL DEFAULT 0,
+  `apiBase` bigint NOT NULL DEFAULT 0,
+  `apiBaseMtime` bigint NOT NULL DEFAULT 0,
+  `apiRefreshWindow` int DEFAULT NULL,
+  `apiRefreshAmount` int DEFAULT NULL,
+  `apiBase2` bigint NOT NULL DEFAULT 0,
+  `apiBaseMtime2` bigint NOT NULL DEFAULT 0,
+  `apiRefreshWindow2` int DEFAULT NULL,
+  `apiRefreshAmount2` int DEFAULT NULL,
+  `sensitiveSearchCount` bigint NOT NULL DEFAULT 0,
+  `sensitiveSearchFallbackCount` bigint NOT NULL DEFAULT 0,
+  `sensitiveSearchBase` bigint NOT NULL DEFAULT 0,
+  `sensitiveSearchBaseMtime` bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`contactId`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 --
@@ -59,16 +83,17 @@ CREATE TABLE `ContactInfo` (
   `cflags` int NOT NULL DEFAULT 0,
   `data` varbinary(32767) DEFAULT NULL,
   `password` varbinary(2048) DEFAULT NULL,
-  `passwordTime` int NOT NULL DEFAULT 0,
+  `passwordTime` bigint NOT NULL DEFAULT 0,
   `country` varbinary(256) DEFAULT NULL,
   `collaborators` varbinary(8192) DEFAULT NULL,
+  `collaboratorsOverflow` longblob DEFAULT NULL,
   `passwordUseTime` bigint NOT NULL DEFAULT 0,
   `updateTime` bigint NOT NULL DEFAULT 0,
   `demoBirthday` int DEFAULT NULL,
   `primaryContactId` int NOT NULL DEFAULT 0,
   PRIMARY KEY (`contactDbId`),
   UNIQUE KEY `email` (`email`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 
@@ -81,7 +106,7 @@ CREATE TABLE `ContactPrimary` (
   `contactId` int NOT NULL,
   `primaryContactId` int NOT NULL,
   PRIMARY KEY (`contactId`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 
@@ -96,7 +121,7 @@ CREATE TABLE `Roles` (
   `roles` tinyint NOT NULL DEFAULT 0,
   `activity_at` bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (`contactDbId`,`confid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 --
@@ -106,11 +131,27 @@ CREATE TABLE `Roles` (
 DROP TABLE IF EXISTS `Settings`;
 CREATE TABLE `Settings` (
   `name` varbinary(256) DEFAULT NULL,
-  `value` int NOT NULL,
+  `value` bigint NOT NULL,
   `data` varbinary(32767) DEFAULT NULL,
   UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
+--
+-- Table structure for table `WorkItem`
+--
 
-insert into Settings (name, value) values ('sversion', 100);
+DROP TABLE IF EXISTS `WorkItem`;
+CREATE TABLE `WorkItem` (
+  `serverId` int NOT NULL,
+  `root` varbinary(255) NOT NULL,
+  `workType` varbinary(80) NOT NULL,
+  `workSubtype` varbinary(80) NOT NULL,
+  `work` longblob NOT NULL,
+  `touchedAt` bigint NOT NULL DEFAULT 0,
+  `dequeuedAt` bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (`serverId`,`root`,`workType`,`workSubtype`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+
+insert into Settings (name, value) values ('sversion', 188);

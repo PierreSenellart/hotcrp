@@ -1,52 +1,63 @@
 <?php
 // pages/conflictassign.php -- HotCRP chair's conflict assignment page
-// Copyright (c) 2006-2022 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class ConflictAssign_Page {
-    /** @param Contact $user
+    /** @param Contact $viewer
      * @param Qrequest $qreq */
-    static function go($user, $qreq) {
-        $conf = $user->conf;
+    static function go($viewer, $qreq) {
+        $conf = $viewer->conf;
 
-        if (!$user->is_manager()) {
-            $user->escape();
+        if (!$viewer->is_manager()) {
+            $viewer->escape();
         }
-        $user->add_overrides(Contact::OVERRIDE_CONFLICT);
+        $viewer->add_overrides(Contact::OVERRIDE_CONFLICT);
         $isneg = friendly_boolean($qreq->neg);
         $isall = !$isneg && friendly_boolean($qreq->all);
 
         $qreq->print_header("Assignments", "conflictassign", ["subtitle" => "Conflicts"]);
         echo '<nav class="papmodes mb-5 clearfix"><ul>',
-            '<li class="papmode"><a href="', $conf->hoturl("autoassign"), '">Automatic</a></li>',
-            '<li class="papmode"><a href="', $conf->hoturl("manualassign"), '">Manual</a></li>',
-            '<li class="papmode active"><a href="', $conf->hoturl("conflictassign"), '">Conflicts</a></li>',
-            '<li class="papmode"><a href="', $conf->hoturl("bulkassign"), '">Bulk update</a></li>',
+            '<li class="papmode">', $conf->hotlink("Automatic", "autoassign"), '</li>',
+            '<li class="papmode">', $conf->hotlink("Manual", "manualassign"), '</li>',
+            '<li class="papmode active">', $conf->hotlink("Conflicts", "conflictassign"), '</li>',
+            '<li class="papmode">', $conf->hotlink("Bulk update", "bulkassign"), '</li>',
             '</ul></nav>';
 
         echo '<div class="w-text mt-5 mb-5">';
 
         if ($isneg) {
             echo '<p>This page lists conflicts declared by authors, but not justified by fuzzy matching between authors and PC members’ affiliations and collaborator lists.</p>';
-            echo '<p><a href="', $conf->hoturl("conflictassign"), '">Check for missing conflicts</a></p>';
+            echo '<p>', $conf->hotlink("Check for missing conflicts", "conflictassign"), '</p>';
         } else {
             echo '<p>This page shows potential missing conflicts detected by fuzzy matching between authors and PC members’ affiliations and collaborator lists. Confirm true conflicts and mark false positives using the buttons.</p>',
-                '<p><a href="', $conf->hoturl("conflictassign", "neg=1"), '">Check for inappropriate conflicts</a> <span class="barsep">·</span> ';
+                '<p>', $conf->hotlink("Check for inappropriate conflicts", "conflictassign", ["neg" => 1]), ' <span class="barsep">·</span> ';
             if ($isall) {
-                echo '<a href="', $conf->hoturl("conflictassign"), '">Hide previously-confirmed conflicts</a>';
+                echo $conf->hotlink("Hide previously-confirmed conflicts", "conflictassign");
             } else {
-                echo '<a href="', $conf->hoturl("conflictassign", "all=1"), '">Include previously-confirmed conflicts</a>';
+                echo $conf->hotlink("Include previously-confirmed conflicts", "conflictassign", ["all" => 1]);
             }
             echo '</p>';
         }
 
         echo "</div>\n";
 
-        $search = (new PaperSearch($user, ["t" => $qreq->t ?? "alladmin", "q" => ""]))
-            ->set_urlbase("conflictassign", [
+        $limits = PaperSearch::viewable_manager_limits($viewer, $qreq->t);
+        if (!$qreq->t || !in_array($qreq->t, $limits, true)) {
+            $qreq->t = $limits[0];
+        }
+
+        $search = (new PaperSearch($viewer, [
+                "q" => "",
+                "t" => $qreq->t,
+                "tsoft" => $viewer->privChair
+            ]))->set_urlbase("conflictassign", [
                 "neg" => $isneg ? 1 : null,
                 "all" => $isall ? 1 : null
             ]);
-        $rowset = $conf->paper_set(["allConflictType" => 1, "allReviewerPreference" => 1, "tags" => 1, "paperId" => $search->paper_ids()], $user);
+        $rowset = $conf->paper_set([
+            "allConflictType" => 1, "allReviewerPreference" => 1,
+            "tags" => 1, "paperId" => $search->paper_ids()
+        ], $viewer);
         $qreq->qsession()->commit(); // page takes forever to render
 
         if ($isneg) {
@@ -76,7 +87,7 @@ class ConflictAssign_Page {
         $conf->ensure_cached_user_collaborators();
         $t0 = microtime(true);
         $reportid = $isneg ? "conflictassign:neg" : "conflictassign";
-        foreach ($conf->pc_members() as $pc) {
+        foreach ($conf->viewable_pc_members($viewer) as $pc) {
             set_time_limit(30);
             $paperlist = new PaperList($reportid, $search, $args, $qreq);
             $paperlist->set_reviewer_user($pc);
@@ -85,14 +96,14 @@ class ConflictAssign_Page {
             $rstate = $paperlist->table_render();
             if (!$rstate->is_empty()) {
                 if (!$any) {
-                    echo Ht::form($conf->hoturl("conflictassign")),
+                    echo $conf->hotform("conflictassign"),
                         '<div class="pltable-fullw-container demargin">';
                     $rstate->print_table_start($paperlist->table_attr, true);
                 } else {
                     echo $rstate->heading_separator_row(), "</tbody>\n",
                         $rstate->tbody_start();
                 }
-                $t = $user->reviewer_html_for($pc);
+                $t = $viewer->reviewer_html_for($pc);
                 if ($pc->affiliation) {
                     $t .= " <span class=\"auaff\">(" . htmlspecialchars($pc->affiliation) . ")</span>";
                 }

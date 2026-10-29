@@ -27,7 +27,7 @@ It’s easy to change tags and to list all papers with a given tag,
 and <em>ordered</em> tags preserve a particular paper order.
 Tags also affect color highlighting in paper lists.</p>
 
-<p>Tags are visible to the PC and hidden from authors$conflictmsg. <em>Twiddle
+<p>Tags are visible to the PC and hidden from authors{$conflictmsg}. <em>Twiddle
 tags</em>, with names like “#~tag”, are visible only to their creators. Tags
 with two twiddles, such as “#~~tag”, are visible only to PC chairs. Tags are
 case insensitive, so “#TAG” and “#tAg” are considered identical.</p>";
@@ -66,7 +66,6 @@ as a column.</p>
             } else {
                 echo "They are hidden from conflicted PC members; for instance, if a PC member searches for a tag, the result will never include their conflicts.";
             }
-            echo $this->hth->change_setting_link("tag_visibility_conflict"), " ";
         }
         echo "</p>";
     }
@@ -137,7 +136,7 @@ strictly sequential values, like #tag#1,
 order</b>. To create an order by entering explicit positions and/or dragging
 papers into order, use a search like “", $hth->search_link("editsort:#tagname"), "”.</p>
 
-<p>The ", $hth->hotlink("autoassigner", "autoassign", "a=discorder"), "
+<p>The ", $hth->hotlink("autoassigner", "autoassign", ["a" => "discorder"]), "
 has special support for creating discussion orders. It tries to group papers
 with similar PC conflicts, which can make the meeting run smoother.</p>";
     }
@@ -180,9 +179,9 @@ high-ranked paper, but it’s usually better to trust the PC.)</p>\n";
 
     function print_example_pcpaper() {
         echo "<p><strong>Mark PC-authored papers for extra scrutiny.</strong>
- First, ", $this->hth->hotlink("search for PC members’ last names in author fields", "search", "t=s&amp;qt=au"), ".
+ First, ", $this->hth->hotlink("search for PC members’ last names in author fields", "search", ["t" => "s", "qt" => "au"]), ".
  Check for accidental matches and select the papers with PC members as authors, then use the action area below the search list to add the tag #pcpaper.
- A ", $this->hth->hotlink("search", "search", "t=s&amp;q=-%23pcpaper"), " shows papers without PC authors.</p>\n";
+ A ", $this->hth->hotlink("search", "search", ["t" => "s", "q" => "-#pcpaper"]), " shows papers without PC authors.</p>\n";
     }
 
     function print_example_allotment() {
@@ -193,7 +192,7 @@ high-ranked paper, but it’s usually better to trust the PC.)</p>\n";
             " Each PC member is assigned an allotment of votes to distribute among papers.
  For instance, if #{$vt} were a voting tag with an allotment of 10, then a PC member could assign 5 votes to a paper by adding the twiddle tag #~{$vt}#5.
  The system automatically sums PC members’ votes into the public #{$vt} tag.
- To search for papers by vote count, search for “", $this->hth->search_link("rorder:#$vt"),
+ To search for papers by vote count, search for “", $this->hth->search_link("rorder:#{$vt}"),
     "”. (", $this->hth->help_link("voting"), ")</p>\n";
     }
 
@@ -211,7 +210,7 @@ Publishing the order lets PC members prepare to discuss upcoming papers.
 Define an ordered tag such as #discuss, then ask the PC to ", $this->hth->search_link("search for “order:#discuss”", "order:#discuss"), ".
 The PC can now see the order and use quick links to go from paper to paper.";
         if ($this->user->isPC && !$this->conf->pc_can_view_conflicted_tags()) {
-            echo " However, since PC members can’t see tags for conflicted papers, each PC member might see a different list.", $this->hth->change_setting_link("tag_visibility_conflict");
+            echo " However, since PC members can’t see tags for conflicted papers, each PC member might see a different list.";
         }
         echo "</p>\n";
     }

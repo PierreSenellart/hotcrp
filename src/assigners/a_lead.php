@@ -1,6 +1,6 @@
 <?php
 // a_lead.php -- HotCRP assignment helper classes
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Lead_Assignable extends Assignable {
     /** @var 0|1|2 */
@@ -58,49 +58,51 @@ class Lead_AssignmentParser extends AssignmentParser {
         Conflict_AssignmentParser::load_conflict_state($state);
     }
     function allow_paper(PaperInfo $prow, AssignmentState $state) {
-        if ($this->key === "manager") {
-            if ($state->user->privChair) {
-                return true;
-            } else {
-                return new AssignmentError("<0>Only chairs and sysadmins can change paper administrators");
+        if ($this->key !== "manager") {
+            return $state->user->can_manage($prow);
+        } else if ($state->user->privChair) {
+            if (($fr = $state->user->perm_scope_allows(TokenScope::S_SUB_ADMIN, $prow))) {
+                $state->paper_error($fr);
+                return false;
             }
-        } else {
-            return $state->user->can_administer($prow);
+            return true;
         }
+        $state->paper_error("<0>Only chairs and sysadmins can change paper administrators");
+        return false;
     }
     function user_universe($req, AssignmentState $state) {
         if ($this->key === "shepherd" && $state->conf->setting("extrev_shepherd")) {
-            return "pc+reviewers";
-        } else {
-            return "pc";
+            return self::UU_PC_REVIEWERS;
         }
+        return self::UU_PC;
     }
     function expand_any_user(PaperInfo $prow, $req, AssignmentState $state) {
         if ($this->remove) {
             $m = $state->query(new Lead_Assignable($this->xtype, $prow->paperId));
             $cids = array_map(function ($x) { return $x->_cid; }, $m);
             return $state->users_by_id($cids);
-        } else {
-            return null;
         }
+        return null;
     }
     function expand_missing_user(PaperInfo $prow, $req, AssignmentState $state) {
         return $this->expand_any_user($prow, $req, $state);
     }
     function allow_user(PaperInfo $prow, Contact $user, $req, AssignmentState $state) {
-        if ($this->remove
-            || !$user->contactId
-            || $user->pc_track_assignable($prow)
-            || $user->allow_administer($prow)
-            || ($rt = $prow->review_type($user)) >= REVIEW_PC
-            || ($rt === REVIEW_EXTERNAL
-                && $this->key === "shepherd"
-                && $state->conf->setting("extrev_shepherd"))) {
+        if (!$user->contactId) {
+            return $user === $state->none_user();
+        } else if ($this->remove
+                   || $user->pc_track_assignable($prow)
+                   || $user->allow_admin($prow)
+                   || ($rt = $prow->review_type($user)) >= REVIEW_PC
+                   || ($rt === REVIEW_EXTERNAL
+                       && $this->key === "shepherd"
+                       && $state->conf->setting("extrev_shepherd"))) {
             return true;
         }
         $uname = $user->name(NAME_E);
         $verb = $this->key === "manager" ? "administer" : $this->key;
-        return new AssignmentError("<0>{$uname} can’t {$verb} #{$prow->paperId}");
+        $state->paper_error("<0>{$uname} can’t {$verb} #{$prow->paperId}");
+        return false;
     }
     function apply(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
         $remcid = null;
@@ -126,19 +128,22 @@ class Lead_Assigner extends Assigner {
         $this->description = $this->type() === "manager" ? "administrator" : $this->type();
     }
     static function make(AssignmentItem $item, AssignmentState $state) {
-        if (!$item->existed()) {
+        if (!$item->deleted()
+            && $item->post("_cid") !== $item->pre("_cid")) {
             Conflict_Assigner::check_unconflicted($item, $state);
         }
         return new Lead_Assigner($item, $state);
+    }
+    function about() {
+        return SearchTerm::ABOUT_SUB;
     }
     function icon() {
         if ($this->type() === "lead") {
             return review_lead_icon();
         } else if ($this->type() === "shepherd") {
             return review_shepherd_icon();
-        } else {
-            return "({$this->description})";
         }
+        return "({$this->description})";
     }
     function unparse_description() {
         return $this->description;
@@ -177,7 +182,7 @@ class Lead_Assigner extends Assigner {
                 --$ct->$k;
             }
             if (!$this->item->deleted()) {
-                $ct = $deltarev->ensure($this->cid);
+                $ct = $deltarev->ensure($this->cid());
                 ++$ct->ass;
                 ++$ct->$k;
             }

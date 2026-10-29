@@ -16,10 +16,14 @@ class Tags_SettingParser extends SettingParser {
     static function si_flag(Si $si) {
         if ($si->name === "tag_hidden") {
             return TagInfo::TF_HIDDEN;
+        } else if ($si->name === "tag_chair_hidden") {
+            return TagInfo::TF_CHAIR_HIDDEN;
         } else if ($si->name === "tag_readonly") {
             return TagInfo::TF_READONLY;
-        } else if ($si->name === "tag_sitewide") {
-            return TagInfo::TF_SITEWIDE;
+        } else if ($si->name === "tag_admin_open") {
+            return TagInfo::TFM_ADMIN_PUBLIC;
+        } else if ($si->name === "tag_pc_open") {
+            return TagInfo::TF_PC_PUBLIC;
         } else if ($si->name === "tag_vote_approval") {
             return TagInfo::TF_APPROVAL;
         } else if ($si->name === "tag_vote_allotment") {
@@ -32,21 +36,22 @@ class Tags_SettingParser extends SettingParser {
 
     /** @return list<TagInfo> */
     static function sorted_settings_for(TagMap $map, Si $si) {
-        return $map->sorted_settings_having(self::si_flag($si));
+        return $map->sorted_settings_having(self::si_flag($si), true);
     }
 
     function __construct(SettingValues $sv) {
         $this->sv = $sv;
         $this->tagger = new Tagger($sv->user);
+        // `base_map` contains options, but not modifiable settings
         $this->base_map = TagMap::make($sv->conf, false);
     }
 
     function set_oldv(Si $si, SettingValues $sv) {
-        if (in_array($si->name, ["tag_hidden", "tag_readonly", "tag_sitewide", "tag_vote_approval"], true)) {
+        if (in_array($si->name, ["tag_hidden", "tag_readonly", "tag_admin_open", "tag_pc_open", "tag_vote_approval"], true)) {
             $sv->set_oldv($si->name, self::render_tags(self::sorted_settings_for($sv->conf->tags(), $si)));
         } else if ($si->name === "tag_vote_allotment") {
             $x = [];
-            foreach ($sv->conf->tags()->sorted_settings_having(TagInfo::TF_ALLOTMENT) as $t) {
+            foreach ($sv->conf->tags()->sorted_settings_having(TagInfo::TF_ALLOTMENT, true) as $t) {
                 $x[] = "{$t->tag}#{$t->allotment}";
             }
             $sv->set_oldv("tag_vote_allotment", join(" ", $x));
@@ -61,61 +66,67 @@ class Tags_SettingParser extends SettingParser {
         $last = null;
         $tx = [];
         foreach ($tl as $ti) {
-            if (!$last || $last->tag !== $ti->tag) {
+            if (!$last || strcasecmp($last->tag, $ti->tag) !== 0) {
                 $tx[] = $ti->tag;
                 $last = $ti;
             }
         }
         return join(" ", $tx);
     }
+    /** Return a note naming the other kinds of read-only tags, if any.
+     * @return string */
+    static private function readonly_note(TagMap $map) {
+        $kinds = [];
+        foreach ([[TagInfo::TF_TRACK, "track tags"],
+                  [TagInfo::TF_SCLASS, "submission class tags"],
+                  [TagInfo::TF_RANK, "rank tags"],
+                  [TagInfo::TF_AUTOSEARCH, "automatic search tags"]] as $fk) {
+            if (!empty($map->settings_having($fk[0]))) {
+                $kinds[] = $fk[1];
+            }
+        }
+        if (empty($kinds)) {
+            return "";
+        }
+        return ucfirst(commajoin($kinds)) . " are also read-only.";
+    }
     static function print_tag_chair(SettingValues $sv) {
+        $hint = "PC members can see these tags, but only administrators can change them.";
+        if (($note = self::readonly_note($sv->conf->tags())) !== "") {
+            $hint = "<div>{$hint}</div><div>{$note}</div>";
+        }
         $sv->print_entry_group("tag_readonly", null, [
             "class" => "need-suggest tags",
-            "hint" => "PC members can see these tags, but only administrators can change them.",
+            "hint" => $hint,
             "autocomplete" => "off"
         ]);
-    }
-    static function print_tag_sitewide(SettingValues $sv) {
-        if ($sv->newv("tag_sitewide") || $sv->conf->has_any_manager()) {
-            $sv->print_entry_group("tag_sitewide", null, [
-                "class" => "need-suggest tags",
-                "hint" => "Administrators can see and change these tags for every submission.",
-                "autocomplete" => "off"
-            ]);
-        }
     }
     static function print_tag_approval(SettingValues $sv) {
         $sv->print_entry_group("tag_vote_approval", null, [
             "class" => "need-suggest tags",
-            "hint" => "<a href=\"" . $sv->conf->hoturl("help", "t=voting") . "\">Help</a>",
+            "hint" => $sv->conf->hotlink("Help", "help", ["t" => "voting"]),
             "autocomplete" => "off"
         ]);
     }
     static function print_tag_vote(SettingValues $sv) {
         $sv->print_entry_group("tag_vote_allotment", null, [
             "class" => "need-suggest tags",
-            "hint" => "“vote#10” declares an allotment of 10 votes per PC member. (<a href=\"" . $sv->conf->hoturl("help", "t=voting") . "\">Help</a>)",
+            "hint" => "“vote#10” declares an allotment of 10 votes per PC member. (" . $sv->conf->hotlink("Help", "help", ["t" => "voting"]) . ")",
             "autocomplete" => "off"
         ]);
     }
     static function print_tag_rank(SettingValues $sv) {
         $sv->print_entry_group("tag_rank", null, [
-            "hint" => 'The <a href="' . $sv->conf->hoturl("offline") . '">offline reviewing page</a> will expose support for uploading rankings by this tag. (<a href="' . $sv->conf->hoturl("help", "t=ranking") . '">Help</a>)',
+            "hint" => "The " . $sv->conf->hotlink("offline reviewing page", "offline") . " will expose support for uploading rankings by this tag. (" . $sv->conf->hotlink("Help", "help", ["t" => "ranking"]) . ")",
             "autocomplete" => "off"
         ]);
     }
-    static function print_tag_seeall(SettingValues $sv) {
-        $sv->print_checkbox("tag_visibility_conflict", "PC can see tags for conflicted submissions");
-    }
 
     private function strip_presets($si, $v) {
-        $have = [];
-        foreach (self::sorted_settings_for($this->base_map, $si) as $ti) {
-            $have[$ti->tag] = true;
-        }
+        $sif = self::si_flag($si);
         $newv = [];
         foreach (Tagger::split_unpack($v) as $tv) {
-            if (!isset($have[$tv[0]])) {
+            if (!$this->base_map->find_having($tv[0], $sif)) {
                 $newv[] = $tv[1] === null ? $tv[0] : "{$tv[0]}#{$tv[1]}";
             }
         }
@@ -185,7 +196,7 @@ class Tags_SettingParser extends SettingParser {
                 $sv->conf->qe("delete from PaperTag where tag?a", array_values($removed_votish));
             }
 
-            $sv->mark_invalidate_caches(["autosearch" => true]);
+            $sv->mark_invalidate_caches("autosearch");
             $this->cleaned = true;
         }
     }

@@ -1,6 +1,6 @@
 <?php
 // papercolumn.php -- HotCRP helper classes for paper list content
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class PaperColumn extends Column {
     const OVERRIDE_NONE = 0;
@@ -35,11 +35,13 @@ class PaperColumn extends Column {
         return call_user_func($cj->function, $conf, $cj);
     }
 
-    /** @param Contact|XtParams $ctx
+    /** @param XtParams $ctx
+     * @param string $name
      * @param string|MessageItem|list<MessageItem> $message */
-    static function column_error($ctx, $message) {
+    static function column_error_at($ctx, $name, $message) {
         if ($ctx instanceof XtParams && $ctx->paper_list) {
-            $ctx->paper_list->column_error($message);
+            $ml = is_string($message) ? MessageItem::warning($message) : $message;
+            $ctx->paper_list->column_error_at($name, $ml);
         }
     }
 
@@ -168,8 +170,7 @@ class Id_PaperColumn extends PaperColumn {
         return $a->paperId <=> $b->paperId;
     }
     function content(PaperList $pl, PaperInfo $row) {
-        $href = $pl->_paperLink($row);
-        return "<a href=\"{$href}\" class=\"pnum taghl\">#{$row->paperId}</a>";
+        return $pl->hotlink_to("#{$row->paperId}", $row, ["class" => "pnum taghl"]);
     }
     function text(PaperList $pl, PaperInfo $row) {
         return (string) $row->paperId;
@@ -266,23 +267,17 @@ class Title_PaperColumn extends PaperColumn {
             $highlight_count = 0;
         }
 
+        $js = ["class" => "ptitle taghl"];
         if (!$highlight_count && ($format = $row->title_format())) {
             $pl->need_render = true;
-            $th = htmlspecialchars($title);
-            $klass_extra = " need-format\" data-format=\"{$format}\" data-title=\"{$th}";
-        } else {
-            $klass_extra = "";
+            $js["class"] .= " need-format";
+            $js["data-format"] = $format;
+            $js["data-title"] = $title;
         }
-
-        $link = $pl->_paperLink($row);
-        $t = "<a href=\"{$link}\" class=\"ptitle taghl{$klass_extra}\">{$highlight_text}</a>";
-        if ($this->want_pdf) {
-            $dtype = $row->finalPaperStorageId > 0 ? DTYPE_FINAL : DTYPE_SUBMISSION;
-            if (($dtype === DTYPE_FINAL ? $row->finalPaperStorageId : $row->paperStorageId) > 1
-                && $pl->user->can_view_option($row, $pl->conf->option_by_id($dtype))
-                && ($doc = $row->document($dtype))) {
-                $t .= " " . $doc->link_html("", DocumentInfo::L_SMALL | DocumentInfo::L_NOSIZE | DocumentInfo::L_FINALTITLE);
-            }
+        $t = $pl->hotlink_to($highlight_text, $row, $js);
+        if ($this->want_pdf
+            && ($doc = $row->viewable_primary_document($pl->user))) {
+            $t .= " " . $doc->link_html("", DocumentInfo::L_SMALL | DocumentInfo::L_NOSIZE | DocumentInfo::L_FINALTITLE);
         }
         if ($this->want_decoration
             && ($pl->row_tags !== "" || $pl->row_tags_override !== "")) {
@@ -308,6 +303,9 @@ class Status_PaperColumn extends PaperColumn {
     }
     function prepare(PaperList $pl, $visible) {
         $this->show_submitted = $pl->search->show_submitted_status();
+        if ($pl->search->limit_term()->is_author()) {
+            $pl->qopts["timeAcceptNotified"] = true;
+        }
         return true;
     }
     function prepare_sort(PaperList $pl, $sortindex) {
@@ -339,7 +337,7 @@ class Status_PaperColumn extends PaperColumn {
     }
     function content(PaperList $pl, PaperInfo $row) {
         list($class, $name) = $row->status_class_and_name($pl->user);
-        if (!$this->show_submitted && $class === "ps-submitted") {
+        if (!$this->show_submitted && $class === "status-submitted") {
             return "";
         }
         return "<span class=\"pstat {$class}\">" . htmlspecialchars($name) . "</span>";
@@ -370,7 +368,7 @@ class ReviewStatus_PaperColumn extends PaperColumn {
         }
     }
     private function data(PaperInfo $row, Contact $user) {
-        $want_assigned = !$row->has_conflict($user) || $user->can_administer($row);
+        $want_assigned = !$row->has_conflict($user) || $user->is_admin($row);
         $done = $started = 0;
         foreach ($row->all_reviews() as $rrow) {
             if ($user->can_view_review_assignment($row, $rrow)
@@ -562,6 +560,15 @@ class Authors_PaperColumn extends PaperColumn {
             return join("; ", $out);
         }
     }
+    function json(PaperList $pl, PaperInfo $row) {
+        $au = [];
+        if ($pl->user->can_view_authors($row) || $this->anon) {
+            foreach ($row->author_list() as $auth) {
+                $au[] = $auth->unparse_nea_json();
+            }
+        }
+        return $au;
+    }
 }
 
 class Collab_PaperColumn extends PaperColumn {
@@ -642,26 +649,20 @@ class ReviewerType_PaperColumn extends PaperColumn {
     /** @var array<int,int> */
     private $sortmap;
 
-    // bits 0-4 are for conflicts
-    // bit  5   is for no conflict
-    // bits 6-9 are for reviews
-    // bit  10  is for lead
-    // bit  11  is for shepherd
-    const FM_CONFLICT = 30;
-    const F_CONFLICT = 2;
-    const F_NOCONFLICT = 32;
-    const FM_REVIEW = 0x3C0;
-    const FS_REVIEWTYPE = 7;
-    const F_REVIEWCOMPLETE = 0x40;
-    const F_LEAD = 0x400;
-    const F_SHEPHERD = 0x800;
+    // review type status bits, meant to provide a sensible sort order
+    const FM_CONFLICT = 0x3E;       // conflict types (Conflict::FM_PCTYPE | CONFLICT_AUTHOR)
+    const F_NOCONFLICT = 0x80;      // not a conflict
+    const FM_REVIEW = 0xF00;        // review bits
+    const F_REVIEWCOMPLETE = 0x100; // is review complete
+    const FS_REVIEWTYPE = 9;
+    const F_LEAD = 0x1000;          // paper lead?
+    const F_SHEPHERD = 0x2000;      // paper shepherd?
 
     function __construct(Conf $conf, $cj) {
         parent::__construct($conf, $cj);
         if (isset($cj->user)) {
             $this->user = $conf->pc_member_by_email($cj->user);
         }
-        assert(self::FM_CONFLICT === Conflict::FM_PCTYPE);
     }
     function view_option_schema() {
         return ["simple", "description", "desc/description", "confdesc/description", "user$"];
@@ -689,7 +690,7 @@ class ReviewerType_PaperColumn extends PaperColumn {
         if ($rrow
             && ($this->not_me
                 ? $pl->user->can_view_review_identity($row, $rrow)
-                : !$rrow->is_ghost())) {
+                : $pl->user->can_view_review_assignment($row, $rrow))) {
             $ranal = $pl->make_review_analysis($rrow, $row);
         } else {
             $ranal = null;
@@ -699,7 +700,14 @@ class ReviewerType_PaperColumn extends PaperColumn {
         }
         if (($ct = $row->conflict_type($this->user)) > CONFLICT_MAXUNCONFLICTED
             && (!$this->not_me || $pl->user->can_view_conflicts($row))) {
-            $flags = $this->description ? $ct & self::FM_CONFLICT : self::F_CONFLICT;
+            if (!$this->description
+                || ($this->not_me
+                    && !$pl->user->can_view_authors($row))) {
+                $flags = Conflict::CT_GENERIC;
+            } else {
+                // don't care about pinned status for sorting
+                $flags = $ct >= CONFLICT_AUTHOR ? CONFLICT_AUTHOR : $ct & self::FM_CONFLICT;
+            }
         } else {
             $flags = self::F_NOCONFLICT;
         }
@@ -743,7 +751,7 @@ class ReviewerType_PaperColumn extends PaperColumn {
         $t = "";
         if ($ranal) {
             $t = $ranal->icon_html(true);
-        } else if (($flags & self::F_CONFLICT) !== 0
+        } else if (($flags & self::FM_CONFLICT) !== 0
                    && $pl->search->limit() !== "a") {
             $t = review_type_icon(-1);
             if ($this->description) {
@@ -785,8 +793,8 @@ class ReviewerType_PaperColumn extends PaperColumn {
         if ($ranal) {
             $t[] = $ranal->icon_text();
         }
-        if ($flags & self::F_CONFLICT) {
-            $t[] = "Conflict";
+        if ($flags & self::FM_CONFLICT) {
+            $t[] = $this->description ? $pl->conf->conflict_set()->unparse_text($flags & self::FM_CONFLICT) : "Conflict";
         }
         return empty($t) ? "" : join("; ", $t);
     }
@@ -908,7 +916,7 @@ class Score_PaperColumn extends ScoreGraph_PaperColumn {
         assert($this->format_field instanceof Discrete_ReviewField);
     }
     function view_option_schema() {
-        return make_array("anyre", "anyreview/anyre", "any/anyre", ...parent::view_option_schema());
+        return ["anyre", "anyreview/anyre", "any/anyre", ...parent::view_option_schema()];
     }
     function prepare(PaperList $pl, $visible) {
         $bound = $pl->user->permissive_view_score_bound($pl->search->limit_term()->is_author());

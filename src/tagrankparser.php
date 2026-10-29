@@ -55,21 +55,21 @@ class TagRankParser {
             $idxs = trim($row["action"]);
             $pid = trim($row["paper"]);
             if ($idxs === "tag") {
-                if (($t = $tagger->check($pid, Tagger::NOVALUE))) {
+                if (($t = $tagger->check_syntax($pid, Tagger::NOVALUE))) {
                     $tag = $t;
                     $curIndex = 0;
                 } else {
                     $settings[] = [null, null, $landmark, "Bad tag: " . Ftext::as(0, $tagger->error_ftext()), null];
                 }
             } else if ($pid === "tag") {
-                if (($t = $tagger->check($idxs, Tagger::NOVALUE))) {
+                if (($t = $tagger->check_syntax($idxs, Tagger::NOVALUE))) {
                     $tag = $t;
                     $curIndex = 0;
                 } else {
                     $settings[] = [null, null, $landmark, "Bad tag: " . Ftext::as(0, $tagger->error_ftext()), null];
                 }
             } else {
-                if ($idxs === "X" || $idxs === "x" || $idxs === "clear") {
+                if ($idxs === "X" || $idxs === "x" || $idxs === "clear" || $idxs === "unset") {
                     $idx = "clear";
                 } else if ($idxs === "" || $idxs === ">") {
                     ++$curIndex;

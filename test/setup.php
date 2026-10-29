@@ -1,17 +1,13 @@
 <?php
 // test/setup.php -- HotCRP helper file to initialize tests
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
-require_once(dirname(__DIR__) . "/src/siteloader.php");
-define("HOTCRP_OPTIONS", SiteLoader::find("test/options.php"));
 define("HOTCRP_TESTHARNESS", true);
-ini_set("error_log", "");
+require_once(dirname(__DIR__) . "/src/init.php");
 ini_set("log_errors", "0");
 ini_set("display_errors", "stderr");
 ini_set("assert.exception", "1");
-
-require_once(SiteLoader::find("src/init.php"));
-initialize_conf();
+error_reporting(E_ALL);
 
 
 // Record mail in MailChecker.
@@ -161,9 +157,9 @@ class MailChecker {
                     "       got {$havel[$badline-1]}\n",
                     $color ? "\x1b[90m" : "",
                     "  expected ",
-                    str_replace("\n", "\n           ", rtrim($have)),
-                    "\n       got ",
                     str_replace("\n", "\n           ", rtrim($wtext)),
+                    "\n       got ",
+                    str_replace("\n", "\n           ", rtrim($have)),
                     $color ? "\x1b[m\n" : "\n"
                 );
             } else {
@@ -231,7 +227,7 @@ class MailChecker {
     }
 }
 
-MailChecker::add_messagedb(file_get_contents(SiteLoader::find("test/emails.txt")), "test/emails.txt");
+MailChecker::add_messagedb(file_get_contents(SiteLoader::resolve("test/emails.txt")), "test/emails.txt");
 
 
 class ProfileTimer {
@@ -259,6 +255,25 @@ class SkipLandmark {
 
 #[Attribute]
 class RequireCdb {
+    public $required;
+    function __construct($required = true) {
+        $this->required = $required;
+    }
+}
+
+#[Attribute]
+class RequireClass {
+    /** @var string */
+    public $class;
+    /** @param string $class */
+    function __construct($class) {
+        $this->class = $class;
+    }
+}
+
+#[Attribute]
+class RequireDb {
+    /** @var bool|'fresh' */
     public $required;
     function __construct($required = true) {
         $this->required = $required;
@@ -327,18 +342,6 @@ class Xassert {
         }
     }
 
-    static function print_landmark() {
-        list($location, $rest) = self::landmark(true);
-        $x = $location . $rest;
-        if ($x !== "") {
-            self::will_print();
-            if (!str_ends_with($x, "\n")) {
-                $x .= "\n";
-            }
-            fwrite(STDERR, $x);
-        }
-    }
-
     /** @param list<string> $sl */
     static private function fail_message($sl) {
         if (self::$retry) {
@@ -351,7 +354,11 @@ class Xassert {
             $x = join("", array_slice($sl, 1));
         } else {
             list($location, $rest) = self::landmark(true);
-            $x = $location . join("", $sl) . $rest;
+            $x = $location . join("", $sl);
+            if ($x !== "" && $rest !== "" && !str_ends_with($x, "\n")) {
+                $x .= "\n";
+            }
+            $x .= $rest;
         }
         if ($x !== "" && !str_ends_with($x, "\n")) {
             $x .= "\n";
@@ -371,6 +378,8 @@ class Xassert {
         ++self::$nerror;
     }
 
+    static public $export_maxlen = 120;
+
     /** @param string $xprefix
      * @param string $eprefix
      * @param mixed $expected
@@ -378,8 +387,8 @@ class Xassert {
      * @param mixed $actual
      * @return string */
     static function match_failure_message($xprefix, $eprefix, $expected, $aprefix, $actual) {
-        $estr = xassert_var_export($expected);
-        $astr = xassert_var_export($actual);
+        $estr = xassert_var_export($expected, self::$export_maxlen);
+        $astr = xassert_var_export($actual, self::$export_maxlen);
         if (strlen($estr) < 20 && strlen($astr) < 20) {
             return "{$xprefix}{$eprefix}{$estr}{$aprefix}{$astr}\n";
         } else {
@@ -418,7 +427,7 @@ class Xassert {
             if (preg_match('/\A[Xx]?assert|\AMailChecker::check|::x?assert/s', $fname)) {
                 continue;
             }
-            if (PHP_MAJOR_VERSION >= 8 && !str_contains($fname, "{closure")) {
+            if (!str_contains($fname, "{closure")) {
                 if (isset($tr["class"])) {
                     $refl = new ReflectionMethod($tr["class"], $tr["function"]);
                 } else {
@@ -480,6 +489,11 @@ class Xassert {
         self::$retry = $r;
         $f();
     }
+
+    /** @return int */
+    static function verbosity() {
+        return self::$test_runner->verbose ?? 0;
+    }
 }
 
 /** @param int $errno
@@ -502,24 +516,24 @@ function xassert_error_handler($errno, $emsg, $file, $line) {
 set_error_handler("xassert_error_handler");
 
 /** @param mixed $x
+ * @param ?int $maxlen
  * @return string */
-function xassert_var_export($x) {
+function xassert_var_export($x, $maxlen = 120) {
     if (is_scalar($x)) {
-        return json_encode($x);
+        return json_encode_db($x);
     } else if (is_object($x)) {
         $cn = get_class($x);
         $ch = spl_object_id($x);
         $xp = "[{$cn}#{$ch}]";
-        if (($s = json_encode($x))) {
-            $s = strlen($s) > 120 ? substr($s, 0, 120) . "...}" : $s;
+        if (($s = json_encode_db($x))) {
+            $s = $maxlen !== null && strlen($s) > $maxlen ? substr($s, 0, $maxlen) . "...}" : $s;
             $xp .= $s;
         }
         return $xp;
-    } else if (($s = json_encode($x))) {
-        return strlen($s) > 121 ? substr($s, 0, 120) . "..." : $s;
-    } else {
-        return "[" . gettype($s) . "]";
+    } else if (($s = json_encode_db($x))) {
+        return $maxlen !== null && strlen($s) > $maxlen ? substr($s, 0, $maxlen) . "..." : $s;
     }
+    return "[" . gettype($s) . "]";
 }
 
 /** @param mixed $x
@@ -532,18 +546,6 @@ function xassert($x, $description = "") {
         Xassert::fail_with($description ? : "assertion failed");
     }
     return !!$x;
-}
-
-/** @return void */
-function xassert_exit() {
-    $ok = Xassert::$nsuccess > 0
-        && Xassert::$nsuccess === Xassert::$n
-        && Xassert::$nerror === 0;
-    echo ($ok ? "* " : "! "), plural(Xassert::$nsuccess, "test"), " succeeded out of ", Xassert::$n, " tried.\n";
-    if (Xassert::$nerror !== 0) {
-        echo "! ", plural(Xassert::$nerror, "other error"), ".\n";
-    }
-    exit($ok ? 0 : 1);
 }
 
 /** @param string $rest
@@ -709,12 +711,29 @@ function xassert_str_starts_with($haystack, $needle) {
 /** @param string $haystack
  * @param string $needle
  * @return bool */
-function xassert_str_contains($haystack, $needle) {
-    $ok = strpos($haystack, $needle) !== false;
+function xassert_str_ends_with($haystack, $needle) {
+    $ok = str_ends_with($haystack, $needle);
     if ($ok) {
         Xassert::succeed();
     } else {
-        Xassert::fail_with("expected `{$haystack}` to contain `{$needle}`");
+        Xassert::fail_with("expected `{$haystack}` to end with `{$needle}`");
+    }
+    return $ok;
+}
+
+/** @param string $haystack
+ * @param string $needle
+ * @return bool */
+function xassert_str_contains($haystack, $needle) {
+    $ok = false;
+    foreach (is_array($needle) ? $needle : [$needle] as $str) {
+        $ok = $ok || str_contains($haystack, $str);
+    }
+    if ($ok) {
+        Xassert::succeed();
+    } else {
+        $expect = join("` or `", is_array($needle) ? $needle : [$needle]);
+        Xassert::fail_with("expected `{$haystack}` to contain `{$expect}`");
     }
     return $ok;
 }
@@ -723,11 +742,15 @@ function xassert_str_contains($haystack, $needle) {
  * @param string $needle
  * @return bool */
 function xassert_not_str_contains($haystack, $needle) {
-    $ok = strpos($haystack, $needle) === false;
+    $ok = true;
+    foreach (is_array($needle) ? $needle : [$needle] as $str) {
+        $ok = $ok && !str_contains($haystack, $str);
+    }
     if ($ok) {
         Xassert::succeed();
     } else {
-        Xassert::fail_with("expected `{$haystack}` to not contain `{$needle}`");
+        $expect = join("` or `", is_array($needle) ? $needle : [$needle]);
+        Xassert::fail_with("expected `{$haystack}` to not contain `{$expect}`");
     }
     return $ok;
 }
@@ -767,11 +790,11 @@ function xassert_array_eqq($actual, $expected, $sort = false) {
     } else {
         $ml = ["Array assertion failed, {$problem}\n"];
         if ($sort) {
-            $aj = json_encode(array_slice($actual, 0, 10));
+            $aj = json_encode_db(array_slice($actual, 0, 10));
             if (count($actual) > 10) {
                 $aj .= "...";
             }
-            $bj = json_encode(array_slice($expected, 0, 10));
+            $bj = json_encode_db(array_slice($expected, 0, 10));
             if (count($expected) > 10) {
                 $bj .= "...";
             }
@@ -825,13 +848,31 @@ function xassert_int_list_eqq($actual, $expected) {
  * @return array<int,array> */
 function search_json($user, $query, $cols = "id", $allow_warnings = false) {
     $pl = new PaperList("empty", new PaperSearch($user, $query));
-    $pl->parse_view($cols, PaperList::VIEWORIGIN_MAX);
-    if ($pl->search->has_problem() && !$allow_warnings) {
+    $pl->parse_view($cols, ViewCommand::ORIGIN_MAX);
+    if ($pl->has_problem() && !$allow_warnings) {
         Xassert::will_print();
         list($first, $rest) = Xassert::landmark(true);
-        fwrite(STDERR, "{$first}Search reports warnings: " . $pl->search->full_feedback_text() . $rest);
+        fwrite(STDERR, "{$first}Search reports warnings: " . $pl->full_feedback_text() . $rest);
     }
     return $pl->text_json();
+}
+
+/** Return the HTML cells `$pl` renders, as a map from paper ID to a map
+ * from column name to HTML.
+ * @return array<int,array<string,string>> */
+function paper_list_html_cells(PaperList $pl) {
+    $cells = [];
+    foreach ($pl->format_json(PaperList::FORMAT_HTML)["papers"] as $p) {
+        $pid = $p["pid"];
+        unset($p["pid"], $p["\$attributes"]);
+        foreach ($p as &$v) {
+            if (is_array($v))
+                $v = $v["html"];
+        }
+        unset($v);
+        $cells[$pid] = $p;
+    }
+    return $cells;
 }
 
 /** @param Contact $user
@@ -840,7 +881,7 @@ function search_json($user, $query, $cols = "id", $allow_warnings = false) {
  * @return string */
 function search_text_col($user, $query, $col = "id") {
     $pl = new PaperList("empty", new PaperSearch($user, $query));
-    $pl->parse_view($col, PaperList::VIEWORIGIN_MAX);
+    $pl->parse_view($col, ViewCommand::ORIGIN_MAX);
     $tj = $pl->text_json();
     $colx = ($pl->vcolumns())[0]->name;
     $x = [];
@@ -879,6 +920,22 @@ function xassert_search_ignore_warnings($user, $query, $expected) {
 /** @return bool */
 function assert_query($q, $b) {
     return xassert_eqq(join("\n", Dbl::fetch_first_columns($q)), $b);
+}
+
+/** Return how many table rows the database has read for this connection so
+ * far: a sum of MySQL/MariaDB `Handler_read%` session status counters -- a
+ * measure of work, not of time, but one that depends on the storage engine
+ * and query plans, so only good for order-of-magnitude checks that an
+ * operation’s cost does not blow up.
+ * @return int */
+function db_rows_read(Conf $conf) {
+    $n = 0;
+    $result = $conf->qe_raw("show session status like 'Handler_read%'");
+    while (($row = $result->fetch_row())) {
+        $n += (int) $row[1];
+    }
+    Dbl::free($result);
+    return $n;
 }
 
 /** @return int */
@@ -990,7 +1047,7 @@ function xassert_paper_status_saved_nonrequired(PaperStatus $ps, $maxstatus = Me
 }
 
 
-/** @param Contact $user
+/** @param Contact|TokenInfo $user
  * @param ?PaperInfo $prow
  * @return Downloader|JsonResult */
 function call_api_result($fn, $user, $qreq, $prow = null) {
@@ -1005,19 +1062,37 @@ function call_api_result($fn, $user, $qreq, $prow = null) {
             $qreq = new Qrequest("GET", $qreq);
         }
     }
+    if ($user instanceof TokenInfo) {
+        $token = $user;
+        if ($token->capabilityType !== TokenInfo::BEARER
+            || !$token->is_active()) {
+            return JsonResult::make_error(401, "<0>Unauthorized");
+        }
+        $qreq->set_header("Authorization", "Bearer {$token->salt}");
+        $qreq->approve_token();
+        $user = clone $token->local_user();
+        // as `initialize_user`: this harness stands in for it
+        if (!Authorization_Token::check_allow_if($token, $user)) {
+            return JsonResult::make_error(401, "<0>Unauthorized");
+        }
+        $user->set_bearer_authorized();
+        $user->set_scope($token->data("scope"));
+    } else {
+        assert(!$user->is_bearer_authorized());
+    }
+    $qreq->set_navigation(Navigation::get());
     $qreq->set_user($user);
     if ($prow) {
         $qreq->set_paper($prow);
-    } else if ($qreq->p && ctype_digit((string) $qreq->p)) {
+    } else if ((string) $qreq->p !== "") {
         $user->conf->set_paper_request($qreq, $user);
     }
-    $qreq->set_navigation(Navigation::get());
     Qrequest::set_main_request($qreq);
     $uf = $user->conf->api($fn, $user, $qreq->method());
     return $user->conf->call_api_on($uf, $fn, $user, $qreq);
 }
 
-/** @param Contact $user
+/** @param Contact|TokenInfo $user
  * @param ?PaperInfo $prow
  * @return object */
 function call_api($fn, $user, $qreq, $prow = null) {
@@ -1025,10 +1100,17 @@ function call_api($fn, $user, $qreq, $prow = null) {
     if (!($jr instanceof JsonResult)) {
         $jr = JsonResult::make_error(500, "<0>Not a JSON");
     }
+    if ($jr->minimal) {
+        if (is_array($jr->content) && !is_list($jr->content)) {
+            return (object) $jr->content;
+        }
+        /** @phan-suppress-next-line PhanTypeMismatchReturn */
+        return $jr->content;
+    }
     if (!isset($jr->content["status_code"]) && $jr->status > 299) {
         $jr->content["status_code"] = $jr->status;
     }
-    return (object) $jr->content;
+    return (object) $jr->jsonSerialize();
 }
 
 /** @param Conf $conf
@@ -1072,11 +1154,10 @@ function save_review($prow, $user, $revreq, $rrow = null, $args = []) {
     if (is_int($prow)) {
         $prow = $user->conf->checked_paper_by_id($prow, $user);
     }
-    $rf = Conf::$main->review_form();
-    $tf = new ReviewValues($rf);
+    $tf = new ReviewValues($user);
     $tf->parse_qreq(new Qrequest("POST", $revreq));
     $rrowx = $rrow ?? $prow->fresh_review_by_user($user);
-    $tf->check_and_save($user, $prow, $rrowx);
+    $tf->check_and_save($prow, $rrowx);
     if (!($args["quiet"] ?? false)) {
         foreach ($tf->problem_list() as $mx) {
             Xassert::will_print();
@@ -1150,33 +1231,48 @@ function sorted_conflicts(PaperInfo $prow, $flags) {
 
 class TestRunner {
     static public $original_opt;
+
+    /** @var Conf */
+    private $conf;
+    /** @var ComponentSet */
+    private $cs;
+    /** @var int */
+    public $verbose;
     /** @var bool */
-    private $verbose;
+    private $all;
     /** @var bool */
+    private $skipping = false;
+    /** @var ?bool */
     private $reset;
     /** @var bool */
-    private $need_reset;
-    /** @var ?bool */
-    private $need_cdb;
-    /** @var ?bool
+    private $need_fresh = true;
+    /** @var bool
      * @readonly */
     public $color;
     /** @var int */
-    private $width = 47;
+    private $width = 64;
     /** @var ?string */
     private $last_classname;
     /** @var ?object */
     private $tester;
-    /** @var ?string */
-    private $requirement_failure;
     /** @var bool */
     private $need_newline = false;
     /** @var ?string */
     private $verbose_test;
+    /** @var ?object */
+    private $save_stack;
+    /** @var int */
+    private $test_index = 0;
+    /** @var int */
+    private $test_count = 1;
+    /** @var int */
+    private $test_digits = 1;
 
 
-    function __construct($arg) {
-        $this->verbose = isset($arg["verbose"]);
+    function __construct(Conf $conf, $arg) {
+        $this->conf = $conf;
+        $this->verbose = $arg["verbose"] ?? 0;
+        $this->all = isset($arg["all"]);
         if (isset($arg["stop"])) {
             Xassert::$stop = true;
         }
@@ -1191,13 +1287,27 @@ class TestRunner {
         } else {
             $this->reset = null;
         }
-        $this->need_reset = true;
         if (isset($arg["color"])) {
             $this->color = true;
         } else if (isset($arg["no-color"])) {
             $this->color = false;
         } else {
             $this->color = posix_isatty(STDERR);
+        }
+        $this->cs = new ComponentSet($conf->root_user(),
+            ["test/testinfo.json"], $conf->opt("testInfo"));
+        $this->cs->set_context_args($this);
+    }
+
+    /** Run test-lifecycle hooks for `$event`: `function` callbacks on
+     * `__$event` component fragments, each called as
+     * `function(TestRunner, object $gj, ...$args)`. Events: `startup` (before
+     * the test list), `reset` (after each db reset, passed the chair Contact),
+     * `shutdown` (after the test list).
+     * @param string $event */
+    function run_hooks($event, ...$args) {
+        foreach ($this->cs->members("__{$event}", "function") as $gj) {
+            $this->cs->call_function($gj, $gj->function, $gj, ...$args);
         }
     }
 
@@ -1226,20 +1336,23 @@ class TestRunner {
             $stmt = $m[1];
             $s = substr($s, strlen($m[0]));
             if (preg_match('/\ACREATE\s*TABLE\s*\`(.*?)\`/i', $stmt, $m)) {
+                // TRUNCATE also resets AUTO_INCREMENT
                 $truncates[] = "TRUNCATE TABLE `{$m[1]}`;\n";
-                if (stripos($stmt, "auto_increment") !== false) {
-                    $truncates[] = "ALTER TABLE `{$m[1]}` AUTO_INCREMENT=0;\n";
-                }
             } else if (!preg_match('/\ADROP\s*TABLE\s*(?:IF\s*EXISTS\s*|)\`.*?\`;\z/', $stmt)) {
                 $rebuild = true;
                 break;
             }
         }
 
-        if ($rebuild
-            || !preg_match('/\A\s*insert into Settings[^;]*\(\'(allowPaperOption|sversion)\',\s*(\d+)\);/mi', $s, $m)
-            || Dbl::fetch_ivalue($dblink, "select value from Settings where name=?", $m[1]) !== intval($m[2])) {
-            $rebuild = true;
+        if (!$rebuild) {
+            $ok = preg_match('/\A\s*insert into Settings[^;]*\(\'(allowPaperOption|sversion)\',\s*(\d+)[,\)]/mi', $s, $m);
+            $result = $ok ? Dbl::qx($dblink, "select value from Settings where name=?", $m[1]) : null;
+            if (!$result
+                || $dblink->errno !== 0
+                || !($row = $result->fetch_row())
+                || (int) $row[0] !== intval($m[2])) {
+                $rebuild = true;
+            }
         }
 
         if ($rebuild) {
@@ -1254,11 +1367,12 @@ class TestRunner {
             error_log("* Error initializing database.\n{$dblink->error}");
             exit(1);
         }
+        Conf::set_current_time();
     }
 
     /** @param bool $first */
     static function reset_options($first = false) {
-        Conf::$main->qe("insert into Settings set name='options', value=1, data='[{\"id\":1,\"name\":\"Calories\",\"abbr\":\"calories\",\"type\":\"numeric\",\"order\":1,\"display\":\"default\"}]' ?U on duplicate key update data=?U(data)");
+        Conf::$main->qe("insert into Settings set name='options', value=1, data='[{\"id\":1,\"name\":\"Calories\",\"type\":\"numeric\",\"order\":7,\"display\":\"rest\"}]' ?U on duplicate key update data=?U(data)");
         Conf::$main->qe("alter table PaperOption auto_increment=2");
         Conf::$main->qe("delete from PaperOption where optionId!=1");
         Conf::$main->load_settings();
@@ -1267,11 +1381,12 @@ class TestRunner {
     /** @param bool $rebuild */
     static function reset_db($rebuild = false) {
         $conf = Conf::$main;
+        $conf->call_shutdown_functions();
         $timer = new ProfileTimer;
         MailChecker::clear();
 
         // Initialize from an empty database
-        self::reset_schema($conf->dblink, SiteLoader::find("src/schema.sql"), $rebuild);
+        self::reset_schema($conf->dblink, SiteLoader::resolve("src/schema.sql"), $rebuild);
         $timer->mark("schema");
 
         // No setup phase; initial review rounds
@@ -1282,7 +1397,7 @@ class TestRunner {
 
         // Contactdb.
         if (($cdb = $conf->contactdb())) {
-            self::reset_schema($cdb, SiteLoader::find("test/cdb-schema.sql"), $rebuild);
+            self::reset_schema($cdb, SiteLoader::resolve("test/cdb-schema.sql"), $rebuild);
             Dbl::qe($cdb, "insert into Conferences set confuid=?", $conf->dbname);
             Contact::$props["demoBirthday"] = Contact::PROP_CDB | Contact::PROP_NULL | Contact::PROP_INT | Contact::PROP_IMPORT;
         }
@@ -1298,7 +1413,7 @@ class TestRunner {
         $user_chair->save_roles(Contact::ROLE_ADMIN | Contact::ROLE_CHAIR | Contact::ROLE_PC, $user_chair);
 
         // Load data.
-        $json = json_decode(file_get_contents(SiteLoader::find("test/db.json")));
+        $json = json_decode(file_get_contents(SiteLoader::resolve("test/db.json")));
         if (!$json) {
             error_log("* test/testdb.json error: " . json_last_error_msg());
             exit(1);
@@ -1333,29 +1448,13 @@ class TestRunner {
         $timer->mark("papers");
 
         self::setup_assignments($json->assignments_1, $user_chair);
-        $conf->save_cdb_user_updates();
+        $conf->call_shutdown_function("CdbUserUpdate");
         $timer->mark("assignment");
-        MailChecker::clear();
-    }
 
-    /** @param string $url */
-    static function set_navigation_base($url) {
-        $nav = Navigation::get();
-        $urlp = parse_url($url);
-        $nav->protocol = ($urlp["scheme"] ?? "http") . "://";
-        $nav->host = $urlp["host"] ?? "example.com";
-        $nav->server = $nav->protocol . $nav->host;
-        if (($s = $urlp["pass"] ?? null)) {
-            $nav->server .= ":{$s}";
+        if (($tr = Xassert::$test_runner)) {
+            $tr->run_hooks("reset", $user_chair);
         }
-        if (($s = $urlp["user"] ?? null)) {
-            $nav->server .= "@{$s}";
-        }
-        if (($s = $urlp["port"] ?? null)) {
-            $nav->server .= ":{$s}";
-        }
-        $nav->base_path = $nav->base_path_relative = $nav->site_path = $nav->site_path_relative =
-            $urlp["path"] ?? "/";
+        MailChecker::clear();
     }
 
 
@@ -1363,7 +1462,9 @@ class TestRunner {
         if (!$this->need_newline) {
             return;
         }
-        if ($this->color) {
+        if (!$this->color) {
+            fwrite(STDERR, "\n");
+        } else if (($this->verbose_test ?? "") !== "") {
             fwrite(STDERR, "\r{$this->verbose_test}\x1b[K\n");
         } else {
             fwrite(STDERR, "\n");
@@ -1373,6 +1474,7 @@ class TestRunner {
 
     function will_fail() {
         if ($this->verbose_test === null) {
+            $this->will_print();
             return;
         }
         if ($this->color) {
@@ -1388,11 +1490,17 @@ class TestRunner {
         if (!$this->verbose) {
             return;
         }
-        $mpfx = str_pad("{$ro->getName()}::{$m->name} ", $this->width, ".");
-        if (strlen($mpfx) > $this->width) {
-            $mpfx = rtrim($mpfx);
+        $digits = sprintf("[%{$this->test_digits}d/%d]", $this->test_index, $this->test_count);
+        $method = $ro->getName() . "::" . $m->name;
+        $dots = str_repeat(".", max(0, $this->width - strlen($digits) - strlen($method) - 2));
+        if (strlen($digits) + 1 + strlen($method) < $this->width) {
+            $dots = " " . $dots;
         }
-        $this->verbose_test = $mpfx;
+        if ($this->color) {
+            $this->verbose_test = "\x1b[38;2;212;23;67m{$digits} \x1b[38;2;70;100;150m{$method}\x1b[1;90m{$dots}\x1b[m";
+        } else {
+            $this->verbose_test = $digits . " " . $method . $dots;
+        }
     }
 
     /** @param object $testo
@@ -1403,11 +1511,12 @@ class TestRunner {
             if (!str_starts_with($m->name, "test")
                 || strlen($m->name) <= 4
                 || ($m->name[4] !== "_" && !ctype_upper($m->name[4]))
-                || ($methodmatch !== "" && !fnmatch($methodmatch, $m->name))) {
+                || ($methodmatch !== "" && !fnmatch($methodmatch, $m->name))
+                || !$m->isPublic()) {
                 continue;
             }
             $this->set_verbose_test($ro, $m);
-            if (!$this->check_test_attributes($m, false)) {
+            if (!$this->check_test_attributes($m)) {
                 if ($this->verbose) {
                     if ($this->color) {
                         fwrite(STDERR, "\x1b[90m{$this->verbose_test} \x1b[1;90mSKIP\x1b[m\n");
@@ -1418,7 +1527,7 @@ class TestRunner {
                 continue;
             }
             if (!$this->verbose) {
-                $testo->{$m->name}();
+                $m->invoke($testo);
                 continue;
             }
             if ($this->color) {
@@ -1429,7 +1538,7 @@ class TestRunner {
             $this->need_newline = true;
             $before_nfail = Xassert::$n - Xassert::$nsuccess;
             $before_nerror = Xassert::$nerror;
-            $testo->{$m->name}();
+            $m->invoke($testo);
             $fail = Xassert::$n - Xassert::$nsuccess > $before_nfail;
             $ok = !$fail && Xassert::$nerror === $before_nerror;
             if ($this->verbose_test !== null) {
@@ -1459,82 +1568,157 @@ class TestRunner {
         }
     }
 
-    private function check_test_attributes($class, $store) {
-        if (PHP_MAJOR_VERSION < 8) {
-            return true;
+    private function check_test_attributes($class) {
+        $require_db = $require_cdb = null;
+        foreach ($class->getAttributes("RequireDb") ?? [] as $attr) {
+            $x = $attr->newInstance();
+            $require_db = $x->required;
         }
         foreach ($class->getAttributes("RequireCdb") ?? [] as $attr) {
             $x = $attr->newInstance();
-            if ($x->required === !!Conf::$main->opt("contactdbDsn")) {
-                continue;
-            } else if ($store) {
-                $this->need_cdb = $x->required;
-            } else {
+            $require_cdb = $x->required;
+        }
+        if ($require_cdb !== null
+            && $require_cdb !== !!$this->conf->opt("contactdbDsn")) {
+            return false;
+        }
+        foreach ($class->getAttributes("RequireClass") ?? [] as $attr) {
+            if (!class_exists($attr->newInstance()->class, false))
                 return false;
-            }
+        }
+        if ($require_db === false) {
+            $this->need_fresh = false;
+        } else if ($require_db === "fresh") {
+            $this->need_fresh = true;
         }
         return true;
     }
 
     /** @param string $test */
     private function set_test_class($test) {
-        $this->last_classname = $test;
-        $this->tester = null;
+        if ($this->tester) {
+            $ro = new ReflectionObject($this->tester);
+            if ($ro->hasMethod("finalize")
+                && ($m = $ro->getMethod("finalize"))->isPublic()) {
+                $m->invoke($this->tester);
+            }
+            $this->tester = null;
+        }
 
+        if ($test === "") {
+            return;
+        }
+
+        $need_fresh = $this->need_fresh;
         $class = new ReflectionClass($test);
-        $this->check_test_attributes($class, true);
+        if (!$this->check_test_attributes($class)) {
+            if (!$this->save_stack) {
+                Xassert::fail_with("!", "Cannot run `{$test}` due to requirement failure");
+            }
+            $this->need_fresh = $need_fresh;
+            return;
+        }
 
         // prepare database
-        if ($this->reset ?? $this->need_reset) {
-            self::reset_db($this->reset ?? false);
-            $this->need_reset = false;
-            $this->reset = null;
-        }
-
-        // apply CDB requirement
-        if ($this->need_cdb === true && !Conf::$main->opt("contactdbDsn")) {
-            if (!(self::$original_opt["contactdbDsn"] ?? null)) {
-                $this->requirement_failure = "test class requires contactdb";
-                return;
+        if ($this->reset ?? $this->need_fresh) {
+            if ($this->color && !$this->verbose) {
+                fwrite(STDERR, sprintf("\r\x1b[38;2;212;23;67m[%{$this->test_digits}d/%d] \x1b[38;2;70;100;150m%s...\x1b[m \x1b[K",
+                                       $this->test_index - 1, $this->test_count, "(reset database)"));
+                $this->need_newline = true;
             }
-            Conf::$main->set_opt("contactdbDsn", self::$original_opt["contactdbDsn"]);
-            Conf::$main->invalidate_caches(["cdb" => true]);
-        } else if ($this->need_cdb === false && Conf::$main->opt("contactdbDsn")) {
-            Conf::$main->set_opt("contactdbDsn", null);
-            Conf::$main->invalidate_caches(["cdb" => true]);
+            self::reset_db($this->reset ?? false);
+            $this->need_fresh = false;
+            $this->reset = null;
+        } else {
+            $this->need_fresh = $need_fresh;
         }
-        $this->need_cdb = null;
 
         // construct tester
+        $this->last_classname = $test;
+        $this->tester = null;
         $ctor = $class->getConstructor();
         if ($ctor && $ctor->getNumberOfParameters() === 1) {
-            $this->tester = $class->newInstance(Conf::$main);
+            $this->tester = $class->newInstance($this->conf);
         } else {
             assert(!$ctor || $ctor->getNumberOfParameters() === 0);
             $this->tester = $class->newInstance();
         }
+
+        // maybe set verbosity
+        $ro = new ReflectionObject($this->tester);
+        if ($ro->hasMethod("set_verbose")
+            && ($m = $ro->getMethod("set_verbose"))->isPublic()) {
+            $m->invoke($this->tester, $this->verbose);
+        }
+
+        // maybe initialize (usually the constructor suffices; this exists
+        // because it runs post-set_verbose)
+        if ($ro->hasMethod("initialize")
+            && ($m = $ro->getMethod("initialize"))->isPublic()) {
+            $m->invoke($this->tester);
+        }
     }
+
+    private function push_test_state() {
+        $this->save_stack = (object) [
+            "contactdbDsn" => $this->conf->opt("contactdbDsn"),
+            "skipping" => $this->skipping,
+            "next" => $this->save_stack
+        ];
+    }
+
+    private function pop_test_state() {
+        if (!$this->save_stack) {
+            return;
+        }
+        $cdb_dsn = $this->save_stack->contactdbDsn;
+        if ($this->conf->opt("contactdbDsn") !== $cdb_dsn) {
+            $this->conf->set_opt("contactdbDsn", $cdb_dsn);
+            $this->conf->invalidate_caches("cdb");
+        }
+        $this->skipping = $this->save_stack->skipping;
+        $this->save_stack = $this->save_stack->next;
+    }
+
+    private static $special_tests = [
+        "no_argv", "(", ")", "if_all", "no_cdb", "reset_db", "fresh_db"
+    ];
 
     /** @param string $test */
     private function run_test($test) {
         if ($test === "no_argv") {
             return;
+        } else if ($test === "(") {
+            $this->push_test_state();
+            return;
+        } else if ($test === ")") {
+            $this->pop_test_state();
+            return;
+        } else if ($this->skipping) {
+            return;
+        } else if ($test === "if_all") {
+            if (!$this->all) {
+                $this->skipping = true;
+            }
+            return;
         } else if ($test === "no_cdb") {
-            Conf::$main->set_opt("contactdbDsn", null);
-            Conf::$main->invalidate_caches(["cdb" => true]);
+            $this->conf->set_opt("contactdbDsn", null);
+            $this->conf->invalidate_caches("cdb");
             $this->last_classname = null;
             return;
         } else if ($test === "reset_db") {
             if (!$this->reset) {
-                $this->need_reset = $this->reset = true;
+                $this->need_fresh = $this->reset = true;
             }
             $this->last_classname = null;
             return;
-        } else if ($test === "clear_db") {
-            $this->need_reset = true;
+        } else if ($test === "fresh_db") {
+            $this->need_fresh = true;
             $this->last_classname = null;
             return;
         }
+
+        ++$this->test_index;
 
         $methodmatch = "";
         if (($pos = strpos($test, "::")) !== false) {
@@ -1550,48 +1734,185 @@ class TestRunner {
         if ($testclass !== $this->last_classname || $methodmatch === "") {
             $this->set_test_class($testclass);
         }
+
         if ($this->tester) {
+            if ($this->color && !$this->verbose) {
+                fwrite(STDERR, sprintf("\r\x1b[38;2;212;23;67m[%{$this->test_digits}d/%d] \x1b[38;2;70;100;150m%s...\x1b[m \x1b[K",
+                                       $this->test_index, $this->test_count, $test));
+                $this->need_newline = true;
+            }
             $this->run_object_tests($this->tester, $methodmatch);
-        } else {
-            Xassert::fail_with("!", "Cannot run `{$test}`: {$this->requirement_failure}");
         }
     }
 
-    /** @param 'no_cdb'|'reset_db'|class-string ...$tests */
+    private function run_test_list($tests) {
+        // normalize tests
+        $skipstack = [];
+        $skipping = false;
+        $this->test_count = 0;
+        foreach ($tests as $t) {
+            if (!in_array($t, self::$special_tests)) {
+                if (!$skipping) {
+                    ++$this->test_count;
+                }
+            } else if ($t === "(") {
+                $skipstack[] = $skipping;
+            } else if ($t === ")") {
+                $skipping = array_pop($skipstack);
+            } else if ($t === "if_all" && !$this->all) {
+                $skipping = true;
+            }
+        }
+
+        $this->test_index = 0;
+        $this->test_digits = (int) floor(log10(max($this->test_count, 1))) + 1;
+        foreach ($tests as $t) {
+            $this->run_test($t);
+        }
+        if ($this->color && !$this->verbose) {
+            fwrite(STDERR, "\r\x1b[K");
+        }
+        // run last `finalize` method if any
+        $this->set_test_class("");
+    }
+
+    private function expand($tests) {
+        $new_tests = [];
+        foreach ($tests as $test) {
+            if (($gj = $this->cs->get($test)) && isset($gj->members)) {
+                array_push($new_tests, ...$this->expand($gj->members));
+            } else {
+                $new_tests[] = $test;
+            }
+        }
+        return $new_tests;
+    }
+
+    private function complete() {
+        $ok = Xassert::$nsuccess > 0
+            && Xassert::$nsuccess === Xassert::$n
+            && Xassert::$nerror === 0;
+        $msg = ($ok ? "* " : "! ")
+            . plural(Xassert::$nsuccess, "test")
+            . " succeeded out of " . Xassert::$n . " tried.";
+        if ($this->color) {
+            $k = $ok ? "1;38;2;40;160;80" : "1;31";
+            $msg = "\x1b[{$k}m{$msg}\x1b[m";
+        }
+        echo $msg, "\n";
+        if (Xassert::$nerror !== 0) {
+            $k0 = $this->color ? "\x1b[31m" : "";
+            $k1 = $this->color ? "\x1b[m" : "";
+            echo $k0, "! ", plural(Xassert::$nerror, "other error"), ".", $k1, "\n";
+        }
+        return $ok;
+    }
+
+    /** @return ?resource */
+    static private function handle_dblockfiles() {
+        global $Opt;
+        if (!isset($Opt["dbLockfiles"])) {
+            return null;
+        }
+        $lf = SiteLoader::expand_includes(null, $Opt["dbLockfiles"]);
+
+        $first = true;
+        foreach ([true, false] as $require_lock) {
+            $lfx = $lf;
+            while (!empty($lfx)) {
+                // always try first database first
+                if ($first) {
+                    $i = 0;
+                    $first = false;
+                } else {
+                    $i = mt_rand(0, count($lfx) - 1);
+                }
+                $strm = @fopen($lfx[$i], "rb");
+                if ($strm !== false
+                    && (!$require_lock || flock($strm, LOCK_EX | LOCK_NB))) {
+                    if (!$require_lock) {
+                        fwrite(STDERR, "* All test databases are in use; sharing {$lfx[$i]}\n");
+                    }
+                    include $lfx[$i];
+                    putenv("HOTCRP_DBLOCKFILE={$lfx[$i]}");
+                    return $strm;
+                }
+                if ($strm !== false) {
+                    fclose($strm);
+                }
+                array_splice($lfx, $i, 1);
+            }
+        }
+
+        throw new CommandLineException("Cannot read \$Opt[\"dbLockfiles\"]");
+    }
+
+    /** @param 'no_cdb'|'reset_db'|'fresh_db'|class-string ...$tests */
     static function run(...$tests) {
+        global $Opt;
+
         if (($tests[0] ?? "") === "no_argv") {
             $arg = [];
         } else {
             global $argv;
             $arg = (new Getopt)->long(
-                "verbose,V be verbose",
+                "config: Set test options [test/options.php]",
+                "all,a Run all test collections",
+                "verbose#,V# Be verbose",
                 "help,h !",
-                "reset,reset reset test database",
-                "no-reset,no-reset-db,R do not reset test database",
-                "no-cdb no contact database",
-                "stop,s stop on first error",
+                "reset,reset Reset test database",
+                "no-reset,no-reset-db,R Do not reset test database",
+                "no-cdb No contact database",
+                "stop,s Stop on first error",
                 "color !",
                 "no-color !"
-            )->description("Usage: php test/" . basename($_SERVER["PHP_SELF"]) . " [-V] [CLASSNAME...]")
+            )->description("Usage: php test/" . basename($_SERVER["PHP_SELF"]) . " [-V] [TEST...]")
              ->helpopt("help")
              ->interleave(true)
              ->parse($argv);
         }
 
-        $tr = new TestRunner($arg);
+        $Opt["__no_main"] = true;
+        initialize_conf($arg["config"] ?? SiteLoader::resolve("test/options.php"));
+
+        // choose a random unlocked test database if multiple are available;
+        // $lockfile holds that database's lock until the process exits
+        $lockfile = self::handle_dblockfiles();
+
+        // connect to database
+        unset($Opt["__no_main"]);
+        $conf = initialize_conf();
+
+        self::$original_opt = $Opt;
+        Navigation::set(NavigationState::make_base("https://hotcrp-test.invalid/"));
+
+        $tr = new TestRunner($conf, $arg);
         Xassert::$test_runner = $tr;
-        foreach (empty($arg["_"]) ? $tests : $arg["_"] as $test) {
-            $tr->run_test($test);
+        $tr->run_hooks("startup");
+        $test_list = $arg["_"];
+        if (empty($test_list)) {
+            $test_list = empty($tests) ? ["default"] : $tests;
         }
-        xassert_exit();
+        $test_list = $tr->expand($test_list);
+        $tr->run_test_list($test_list);
+        $tr->run_hooks("shutdown");
+        exit($tr->complete() ? 0 : 1);
     }
 }
 
-TestRunner::$original_opt = $Opt;
-TestRunner::set_navigation_base("/");
 
 
 class TestQreq {
+    /** @param Contact $user
+     * @param Qrequest $qreq
+     * @param ?Qsession $qs
+     * @return Qrequest */
+    static function apply_user($user, $qreq, ?Qsession $qs = null) {
+        $qs = $qs ?? new MemoryQsession;
+        $user->has_email() ? $qs->set("u", $user->email) : $qs->unset("u");
+        return $qreq->set_user($user)->set_qsession($qs);
+    }
+
     /** @param array<string,mixed> $args
      * @return Qrequest */
     static function get($args = []) {
@@ -1610,12 +1931,36 @@ class TestQreq {
     }
 
     /** @param array<string,mixed> $args
+     * @param ?Qsession $qs
+     * @return Qrequest */
+    static function user_get(Contact $user, $args = [], ?Qsession $qs = null) {
+        return self::apply_user($user, self::get($args), $qs);
+    }
+
+    /** @param array<string,mixed> $args
      * @return Qrequest */
     static function post($args = []) {
         return (new Qrequest("POST", $args))
             ->set_navigation(Navigation::get())
             ->approve_token()
             ->set_body(null, "application/x-www-form-urlencoded");
+    }
+
+    /** `post` approves the token, so a test that means to check the token
+     * has to start here instead.
+     * @param array<string,mixed> $args
+     * @return Qrequest */
+    static function unapproved_post($args = []) {
+        return (new Qrequest("POST", $args))
+            ->set_navigation(Navigation::get())
+            ->set_body(null, "application/x-www-form-urlencoded");
+    }
+
+    /** @param array<string,mixed> $args
+     * @param ?Qsession $qs
+     * @return Qrequest */
+    static function user_post(Contact $user, $args = [], ?Qsession $qs = null) {
+        return self::apply_user($user, self::post($args), $qs);
     }
 
     /** @param string $page
@@ -1664,5 +2009,77 @@ class TestQreq {
         return (new Qrequest("DELETE", $args))
             ->approve_token()
             ->set_body(null, "application/x-www-form-urlencoded");
+    }
+}
+
+/** Test session handler: sessions persist across instances (“requests”)
+ * in a shared store keyed by ID, as with `PHPQsession` */
+class TestQsession extends Qsession {
+    /** @var array<string,array<string,mixed>> */
+    static public $store = [];
+    /** @var list<?string> */
+    static public $cookies = [];
+
+    /** @return void */
+    static function reset() {
+        self::$store = self::$cookies = [];
+        unset($_COOKIE[session_name()]);
+    }
+
+    /** @param ?string $cookie_sid
+     * @return TestQsession */
+    static function start_request($cookie_sid) {
+        if ($cookie_sid === null) {
+            unset($_COOKIE[session_name()]);
+        } else {
+            $_COOKIE[session_name()] = $cookie_sid;
+        }
+        self::$cookies = [];
+        return new TestQsession;
+    }
+
+    function start($sid) {
+        $sid = $sid ?? $this->new_sid();
+        $this->assign_open($sid, self::$store[$sid] ?? []);
+    }
+
+    function new_sid() {
+        return "sess_" . base64_encode(random_bytes(15));
+    }
+
+    function commit() {
+        if ($this->sopen) {
+            self::$store[$this->sid] = $this->sv;
+            $this->assign_commit();
+        }
+    }
+
+    function refresh() {
+        self::$cookies[] = $this->sid;
+    }
+
+    function set($key, $value) {
+        assert($this->sopen);
+        $this->sv[$key] = $value;
+    }
+
+    function unset($key) {
+        assert($this->sopen);
+        unset($this->sv[$key]);
+    }
+
+    function set2($key1, $key2, $value) {
+        assert($this->sopen);
+        $this->sv[$key1][$key2] = $value;
+    }
+
+    function unset2($key1, $key2) {
+        assert($this->sopen);
+        if (isset($this->sv[$key1])) {
+            unset($this->sv[$key1][$key2]);
+            if (empty($this->sv[$key1])) {
+                unset($this->sv[$key1]);
+            }
+        }
     }
 }

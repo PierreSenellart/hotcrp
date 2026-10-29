@@ -38,10 +38,8 @@ class AssignmentCount {
         $t = $plural ? plural($count, $item) : $count . "&nbsp;" . $item;
         if ($count === 0) {
             return $t;
-        } else {
-            $url = $pc->conf->hoturl("search", "q=" . urlencode("$prefix:{$pc->email}"));
-            return "<a class=\"q\" href=\"{$url}\">{$t}</a>";
         }
+        return $pc->conf->hotlink($t, "search", ["q" => "{$prefix}:{$pc->email}"], ["class" => "q"]);
     }
     /** @param Contact $pc
      * @return string */
@@ -153,12 +151,10 @@ class AssignmentCountSet {
         foreach ($this->user->conf->paper_set($opt, $this->user) as $prow) {
             if ($this->user->can_view_paper($prow)) {
                 if (($this->has & self::HAS_REVIEW)
-                    && $this->user->can_view_review_assignment($prow, null)
                     && $this->user->can_view_review_identity($prow, null)) {
                     foreach ($prow->all_reviews() as $rrow) {
                         if ($rrow->reviewType >= REVIEW_PC
                             && ($rrow->reviewStatus >= ReviewInfo::RS_APPROVED || $prow->timeSubmitted > 0)
-                            && $this->user->can_view_review_assignment($prow, $rrow)
                             && $this->user->can_view_review_identity($prow, $rrow)) {
                             $ct = $this->ensure($rrow->contactId);
                             $ct->rev += 1;
@@ -174,12 +170,14 @@ class AssignmentCountSet {
                 }
                 if (($this->has & self::HAS_LEAD)
                     && $prow->leadContactId > 0
-                    && $prow->timeSubmitted > 0) {
+                    && $prow->timeSubmitted > 0
+                    && $this->user->can_view_lead($prow)) {
                     $this->ensure($prow->leadContactId)->lead += 1;
                 }
                 if (($this->has & self::HAS_SHEPHERD)
                     && $prow->shepherdContactId > 0
-                    && $prow->timeSubmitted > 0) {
+                    && $prow->timeSubmitted > 0
+                    && $this->user->can_view_shepherd($prow)) {
                     $this->ensure($prow->shepherdContactId)->shepherd += 1;
                 }
             }

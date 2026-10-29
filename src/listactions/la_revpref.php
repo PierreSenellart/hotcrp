@@ -1,6 +1,6 @@
 <?php
 // listactions/la_revpref.php -- HotCRP helper classes for list actions
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Revpref_ListAction extends ListAction {
     /** @var string */
@@ -55,27 +55,32 @@ class Revpref_ListAction extends ListAction {
 
     function run_get(Contact $user, Qrequest $qreq, SearchSelection $ssel,
                      Contact $reviewer, $extended) {
-        $not_me = $user->contactId !== $reviewer->contactId;
+        if ($reviewer->contactXid === $user->contactXid) {
+            $reviewer = $user;
+        }
+        $view_bound = $user === $reviewer ? Contact::VIEWPREF_OWN : Contact::VIEWPREF_ALLOW_ALL;
         $fields = [
-            "paper" => true, "title" => true, "email" => $not_me, "preference" => true,
+            "paper" => true, "title" => true, "email" => $user !== $reviewer, "preference" => true,
             "notes" => false, "authors" => false, "abstract" => !!$extended, "topics" => false
         ];
         $texts = [];
         foreach ($ssel->paper_set($user, ["topics" => 1, "reviewerPreference" => 1]) as $prow) {
-            if ($not_me && !$user->allow_administer($prow)) {
+            if ($user->view_preference_state($prow) < $view_bound) {
                 continue;
             }
             $item = ["paper" => $prow->paperId, "title" => $prow->title];
-            if ($not_me) {
+            if ($user !== $reviewer) {
                 $item["email"] = $reviewer->email;
             }
             $item["preference"] = $prow->preference($reviewer)->unparse();
-            if ($prow->has_conflict($reviewer)) {
+            if ($prow->has_conflict($reviewer)
+                && ($user === $reviewer || $user->can_view_conflicts($prow))) {
                 $item["notes"] = "conflict";
                 $fields["notes"] = true;
             }
             if ($extended) {
-                if ($reviewer->can_view_authors($prow)) {
+                if ($user->can_view_authors($prow)
+                    && ($user === $reviewer || $reviewer->can_view_authors($prow))) {
                     $aus = array_map(function ($a) { return $a->name(NAME_P|NAME_A); }, $prow->author_list());
                     $item["authors"] = join("\n", $aus);
                     $fields["authors"] = true;
@@ -89,7 +94,7 @@ class Revpref_ListAction extends ListAction {
             $texts[] = $item;
         }
         $title = "revprefs";
-        if ($not_me) {
+        if ($user !== $reviewer) {
             $title .= "-" . (preg_replace('/@.*|[^\w@.]/', "", $reviewer->email) ? : "user");
         }
         return $user->conf->make_csvg($title, CsvGenerator::FLAG_ITEM_COMMENTS)
@@ -128,7 +133,7 @@ class Revpref_ListAction extends ListAction {
         if ($aset->has_error()) {
             return;
         }
-        return new Redirection($user->conf->selfurl($qreq, null, Conf::HOTURL_RAW | Conf::HOTURL_REDIRECTABLE));
+        return new Redirection($user->conf->selfurl($qreq, null, Conf::HOTURL_REDIRECTABLE));
     }
 
     function run_uploadpref(Contact $user, Qrequest $qreq, SearchSelection $ssel,
@@ -136,7 +141,7 @@ class Revpref_ListAction extends ListAction {
         $reviewer_arg = $user->contactId === $reviewer->contactId ? null : $reviewer->email;
         $conf = $user->conf;
         if ($qreq->cancel && $qreq->page() !== "api") {
-            return new Redirection($user->conf->selfurl($qreq, null, Conf::HOTURL_RAW | Conf::HOTURL_REDIRECTABLE));
+            return new Redirection($user->conf->selfurl($qreq, null, Conf::HOTURL_REDIRECTABLE));
         }
 
         if (($qf = $qreq->file("preffile"))) {
@@ -201,13 +206,13 @@ class Revpref_ListAction extends ListAction {
         }
         if ($execute || $aset->is_empty()) {
             $aset->feedback_msg(AssignmentSet::FEEDBACK_CHANGE);
-            return new Redirection($user->conf->selfurl($qreq, null, Conf::HOTURL_RAW | Conf::HOTURL_REDIRECTABLE));
+            return new Redirection($user->conf->selfurl($qreq, null, Conf::HOTURL_REDIRECTABLE));
         }
 
         $qreq->print_header("Review preferences", "revpref");
         $aset->feedback_msg(AssignmentSet::FEEDBACK_CHANGE_IGNORE);
 
-        echo Ht::form($conf->hoturl("=reviewprefs", ["reviewer" => $reviewer_arg]),
+        echo $conf->hotform("=reviewprefs", ["reviewer" => $reviewer_arg],
             ["class" => "ui-submit js-selector-summary differs need-unload-protection"]),
             Ht::hidden("fn", "applyuploadpref");
         if ($aset->assignment_count() < 5000) {
@@ -228,6 +233,6 @@ class Revpref_ListAction extends ListAction {
             Ht::submit("cancel", "Cancel", ["formnovalidate" => true])
         ], ["class" => "aab aabig"]), "</form>\n";
         $qreq->print_footer();
-        exit(0);
+        Navigation::complete();
     }
 }

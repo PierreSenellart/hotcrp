@@ -29,12 +29,11 @@ class Cdb_Tester {
             error_log("! You may need to run `lib/createdb.sh -c test/cdb-options.php --no-dbuser --batch`.");
             exit(1);
         }
-    }
 
-    function test_setup() {
-        $removables = ["te@tl.edu", "te2@tl.edu", "akhmatova@poema.ru", "leopard@fart.edu", "puma@fart.edu"];
+        $removables = ["te@tl.edu", "te2@tl.edu", "akhmatova@poema.ru", "leopard@fart.edu", "puma@fart.edu", "lynx@fart.edu", "bobcat@fart.edu", "caracal@fart.edu", "ocelot@fart.edu", "margay@fart.edu", "kodkod@fart.edu", "serval@fart.edu", "jaguarundi@fart.edu", "oncilla@fart.edu", "pampas@fart.edu"];
         $this->conf->qe("delete from ContactInfo where email?a", $removables);
         Dbl::qe($this->conf->contactdb(), "delete from ContactInfo where email?a", $removables);
+        $this->conf->invalidate_caches("users");
     }
 
     function test_passwords_1() {
@@ -49,6 +48,7 @@ class Cdb_Tester {
 
         // different password in localdb => both passwords work
         save_password(self::MARINA, "crapdevitch", false);
+        Xassert::will_print();
         xassert(user(self::MARINA)->check_password("crapdevitch"));
         xassert(user(self::MARINA)->check_password("rosdevitch"));
 
@@ -138,7 +138,6 @@ class Cdb_Tester {
     }
 
     function test_chair_update_no_cdb() {
-        Contact::set_main_user(user("marina@poema.ru"));
         $te2 = user("te2@tl.edu");
         $te2_cdb_first = $te2->cdb_user()->firstName;
         $te2_cdb_last = $te2->cdb_user()->lastName;
@@ -175,7 +174,7 @@ class Cdb_Tester {
         $acct = $this->us1->save_user((object) ["email" => $anna, "first" => "Anna", "last" => "Akhmatova"]);
         xassert(!!$acct);
         Dbl::qe("delete from ContactInfo where email=?", $anna);
-        $this->conf->invalidate_user(Contact::make_email($this->conf, $anna));
+        $this->conf->invalidate_user($acct);
         Dbl::qe($this->cdb, "update ContactInfo set passwordUseTime=1 where email=?", $anna);
         save_password($anna, "aquablouse", true);
         MailChecker::check0();
@@ -187,12 +186,18 @@ class Cdb_Tester {
         $user_van = user("van@ee.lbl.gov");
         xassert(!maybe_user("akhmatova@poema.ru")); // but she is in cdb
 
+        $paper1 = $this->user_chair->checked_paper_by_id(1);
+        $authors = array_map(function ($au) {
+            return (object) ["name" => $au->name(), "email" => $au->email, "affiliation" => $au->affiliation];
+        }, $paper1->author_list());
+
         $ps = new PaperStatus($this->conf->root_user());
-        $ps->save_paper_json((object) [
+        $saved = $ps->save_paper_json((object) [
             "id" => 1,
             "authors" => ["puneet@catarina.usc.edu", $user_estrin->email,
                           $user_floyd->email, $user_van->email, "akhmatova@poema.ru"]
         ]);
+        xassert($saved);
 
         $paper1 = $this->user_chair->checked_paper_by_id(1);
         $user_anna = user("akhmatova@poema.ru");
@@ -201,6 +206,10 @@ class Cdb_Tester {
         xassert($user_estrin->act_author_view($paper1));
         xassert($user_floyd->act_author_view($paper1));
         xassert($user_van->act_author_view($paper1));
+
+        // restore the original author list
+        $ps = new PaperStatus($this->conf->root_user());
+        xassert($ps->save_paper_json((object) ["id" => 1, "authors" => $authors]));
     }
 
     function test_add_annes() {
@@ -358,7 +367,7 @@ class Cdb_Tester {
         $pc_json = $this->conf->hotcrp_pc_json($this->user_chair, Conf::PCJM_UI);
         xassert_eqq($pc_json->pc[0]->email, "anne1@dudfield.org");
         $this->conf->sort_by_last = true;
-        $this->conf->invalidate_caches(["pc" => true]);
+        $this->conf->invalidate_caches("pc");
         $pc_json = $this->conf->hotcrp_pc_json($this->user_chair, Conf::PCJM_UI);
         xassert_eqq($pc_json->pc[0]->email, "mgbaker@cs.stanford.edu");
         xassert_eqq($pc_json->pc[0]->uid, 12);
@@ -816,20 +825,70 @@ class Cdb_Tester {
         Dbl::qe($this->conf->contactdb(), "update ContactInfo set firstName='Gussie', lastName='Onufryk', orcid='XXXX-9999-CATK-ITTY', updateTime=? where email='gussie@cat.com'", Conf::$now);
         Dbl::qe($this->conf->contactdb(), "insert into ConferenceUpdates (confid, user_update_at) values (?,?) on duplicate key update user_update_at=greatest(?,user_update_at)", $this->conf->cdb_confid(), Conf::$now, Conf::$now);
 
-        // if requested fields already present, CdbUserUpdate does nothing
-        $nq = Dbl::$nqueries;
-        (new CdbUserUpdate($this->conf))->add("floyd@ee.lbl.gov")->check("firstName");
-        xassert_le(Dbl::$nqueries, $nq + 2);
-
-        // does something
         Conf::advance_current_time(Conf::$now + 5);
-        (new CdbUserUpdate($this->conf))->add("gussie@cat.com")->check();
+        (new CdbUserUpdate($this->conf))->import_empty_props();
 
         $gussie = $this->conf->user_by_email("gussie@cat.com");
         xassert_eqq($gussie->firstName, "Gussie");
         xassert_eqq($gussie->lastName, "Onufryk");
         xassert_eqq($gussie->unaccentedName, "gussie onufryk");
         xassert_ge($this->conf->setting("__cdb_user_update_at"), Conf::$now - 3);
+
+        // if no recent updates, CdbUserUpdate does nothing
+        Conf::advance_current_time(Conf::$now + 5);
+        $nq = Dbl::$nqueries;
+        (new CdbUserUpdate($this->conf))->import_empty_props();
+        xassert_le(Dbl::$nqueries, $nq + 2);
+    }
+
+    function test_require_orcid_imports_cdb_orcid() {
+        $paper1 = $this->user_chair->checked_paper_by_id(1);
+        $authors = array_map(function ($au) {
+            return (object) ["name" => $au->name(), "email" => $au->email, "affiliation" => $au->affiliation];
+        }, $paper1->author_list());
+
+        // jaguarundi: local account lacks the ORCID iD that cdb has;
+        // oncilla: cdb account only; pampas: no ORCID iD anywhere
+        Dbl::qe($this->cdb, "insert into ContactInfo set firstName='Jaguarundi', lastName='Face', email='jaguarundi@fart.edu', orcid='0000-0002-1825-0097', password=' unset', cflags=0");
+        Dbl::qe($this->conf->dblink, "insert into ContactInfo set firstName='Jaguarundi', lastName='Face', email='jaguarundi@fart.edu', password=' unset', cflags=0");
+        Dbl::qe($this->cdb, "insert into ContactInfo set firstName='Oncilla', lastName='Face', email='oncilla@fart.edu', orcid='0000-0001-5109-3700', password=' unset', cflags=0");
+        Dbl::qe($this->conf->dblink, "insert into ContactInfo set firstName='Pampas', lastName='Face', email='pampas@fart.edu', password=' unset', cflags=0");
+        $this->conf->invalidate_caches("users");
+        xassert_eqq($this->conf->checked_user_by_email("jaguarundi@fart.edu")->confirmed_orcid(), "");
+
+        // author without an ORCID iD is refused;
+        // refused save does not create local accounts
+        $this->conf->set_opt("requireOrcid", 1);
+        $ps = new PaperStatus($this->user_chair);
+        $ps->save_paper_json((object) [
+            "id" => 1, "authors" => ["jaguarundi@fart.edu", "oncilla@fart.edu", "pampas@fart.edu"]
+        ]);
+        xassert_str_contains($ps->full_feedback_text(), "Please ask pampas@fart.edu to sign in");
+        xassert_not_str_contains($ps->full_feedback_text(), "jaguarundi@fart.edu");
+        xassert_not_str_contains($ps->full_feedback_text(), "oncilla@fart.edu");
+        $paper1 = $this->user_chair->checked_paper_by_id(1);
+        xassert(!$paper1->author_by_email("pampas@fart.edu"));
+        xassert(!$this->conf->fresh_user_by_email("oncilla@fart.edu"));
+
+        // authors with cdb ORCID iDs are accepted
+        $ps = new PaperStatus($this->user_chair);
+        $ps->save_paper_json((object) [
+            "id" => 1, "authors" => ["jaguarundi@fart.edu", "oncilla@fart.edu"]
+        ]);
+        xassert_not_str_contains($ps->full_feedback_text(), "ORCID");
+        $paper1 = $this->user_chair->checked_paper_by_id(1);
+        xassert_eqq(array_map(function ($au) { return $au->email; }, $paper1->author_list()),
+                    ["jaguarundi@fart.edu", "oncilla@fart.edu"]);
+        xassert_eqq($this->conf->fresh_user_by_email("jaguarundi@fart.edu")->confirmed_orcid(), "0000-0002-1825-0097");
+        $u_oncilla = $this->conf->fresh_user_by_email("oncilla@fart.edu");
+        xassert_eqq($u_oncilla->confirmed_orcid(), "0000-0001-5109-3700");
+        xassert(!$u_oncilla->is_placeholder());
+        xassert_eqq($this->conf->fetch_ivalue("select count(*) from ActionLog where destContactId=? and action like 'Account created%'", $u_oncilla->contactId), 1);
+        $this->conf->set_opt("requireOrcid", null);
+
+        // restore the original author list
+        $ps = new PaperStatus($this->conf->root_user());
+        xassert($ps->save_paper_json((object) ["id" => 1, "authors" => $authors]));
     }
 
     function test_import_secondary() {
@@ -929,5 +988,148 @@ class Cdb_Tester {
         xassert_eqq($xu_leopard->cflags & Contact::CF_PRIMARY, Contact::CF_PRIMARY);
 
         (new ConfInvariants($this->conf))->check_users();
+    }
+
+    function test_assign_review_secondary() {
+        // Set up CDB-only primary and secondary users
+        Dbl::qe($this->cdb, "insert into ContactInfo set firstName='Lynx', lastName='Face', email='lynx@fart.edu', affiliation='Place University', password=' unset', cflags=0");
+        Dbl::qe($this->cdb, "insert into ContactInfo set firstName='Bobcat', lastName='Face', email='bobcat@fart.edu', affiliation='Place University', password=' unset', cflags=0");
+        $cu_lynx = $this->conf->cdb_user_by_email("lynx@fart.edu");
+        $cu_bobcat = $this->conf->cdb_user_by_email("bobcat@fart.edu");
+        (new ContactPrimary)->link($cu_bobcat, $cu_lynx);
+
+        // Neither exists in local DB
+        xassert_eqq($this->conf->user_by_email("lynx@fart.edu"), null);
+        xassert_eqq($this->conf->user_by_email("bobcat@fart.edu"), null);
+
+        // Assigning an external review to the secondary should not crash
+        xassert_assign($this->user_chair, "action,paper,email\nreview,1,bobcat@fart.edu");
+        xassert_search($this->user_chair, "re:lynx@fart.edu", "1");
+    }
+
+    function test_primary_nonascii() {
+        Dbl::qe($this->conf->contactdb(), "insert into ContactInfo set firstName=?, lastName=?, email=?, password=?, cflags=? on duplicate key update firstName=firstName",
+            "Jérôme", "Girardas", "jerome@gotten.edu", "",
+            Contact::CF_NEANONASCII);
+        xassert_eqq($this->conf->user_by_email("jerome@gotten.edu"), null);
+        $cu_jerome = $this->conf->cdb_user_by_email("jerome@gotten.edu");
+
+        $lu_mtnlion = $this->conf->user_by_email("mtnlion@fart.edu");
+        (new ContactPrimary)->link($lu_mtnlion, $cu_jerome);
+
+        $lu_jerome = $this->conf->user_by_email("jerome@gotten.edu");
+        xassert_eqq($lu_jerome->cflags & Contact::CF_NEANONASCII, Contact::CF_NEANONASCII);
+        xassert_eqq($this->conf->fetch_ivalue("select cflags from ContactInfo where email='jerome@gotten.edu'") & Contact::CF_NEANONASCII, Contact::CF_NEANONASCII);
+    }
+
+    /** Return `$email`'s roles in the contactdb, after pending updates.
+     * Clears user caches first, as a new request would.
+     * @param string $email
+     * @return int */
+    private function cdb_roles_for($email) {
+        $this->conf->invalidate_caches("users", "cdb_users");
+        $cdbu = $this->conf->fresh_cdb_user_by_email($email);
+        xassert(!!$cdbu);
+        return $cdbu ? (int) $cdbu->roles : -1;
+    }
+
+    /** @param string $email
+     * @return Contact */
+    private function make_roleless_user($email) {
+        $u = $this->us1->save_user((object) ["email" => $email, "firstName" => "Roleless", "lastName" => "User"]);
+        xassert(!!$u);
+        xassert_eqq($this->cdb_roles_for($email), 0);
+        return $u;
+    }
+
+    function test_cdb_roles_paper_delete() {
+        $email = "caracal@fart.edu";
+        $sub_open = $this->conf->setting("sub_open");
+        $sub_update = $this->conf->setting("sub_update");
+        $sub_sub = $this->conf->setting("sub_sub");
+        $this->conf->save_refresh_setting("sub_open", 1);
+        $this->conf->save_refresh_setting("sub_update", Conf::$now + 1000);
+        $this->conf->save_refresh_setting("sub_sub", Conf::$now + 1000);
+        $ps = new PaperStatus($this->user_chair);
+        xassert($ps->prepare_save_paper_web(new Qrequest("POST", ["title" => "Roles paper", "abstract" => "Abstract", "has_authors" => "1", "authors:1:name" => "Caracal", "authors:1:email" => $email]), null));
+        xassert($ps->execute_save());
+        $this->conf->save_refresh_setting("sub_open", $sub_open);
+        $this->conf->save_refresh_setting("sub_update", $sub_update);
+        $this->conf->save_refresh_setting("sub_sub", $sub_sub);
+        xassert_eqq($this->cdb_roles_for($email), Contact::ROLE_AUTHOR);
+
+        $prow = $this->conf->checked_paper_by_id($ps->paperId);
+        xassert($prow->delete_from_database($this->user_chair));
+        xassert_eqq($this->cdb_roles_for($email), 0);
+    }
+
+    function test_cdb_roles_review_delete_no_rights() {
+        $email = "ocelot@fart.edu";
+        $u = $this->make_roleless_user($email);
+        xassert_assign($this->user_chair, "paper,action,email\n2,review,{$email}\n");
+        xassert_eqq($this->cdb_roles_for($email), Contact::ROLE_REVIEWER);
+
+        // Review API and review page delete with `no_rights`
+        $rrow = $this->conf->checked_paper_by_id(2)->fresh_review_by_user($u);
+        xassert(!!$rrow);
+        xassert($rrow->delete($this->user_chair, ["no_rights" => true, "snapshot" => true]));
+        xassert_eqq($this->cdb_roles_for($email), 0);
+    }
+
+    function test_cdb_roles_contact_assignment() {
+        $email = "margay@fart.edu";
+        $this->make_roleless_user($email);
+        xassert_assign($this->user_chair, "paper,action,email\n2,contact,{$email}\n");
+        xassert_eqq($this->cdb_roles_for($email), Contact::ROLE_AUTHOR);
+        xassert_assign($this->user_chair, "paper,action,email\n2,clearcontact,{$email}\n");
+        xassert_eqq($this->cdb_roles_for($email), 0);
+    }
+
+    function test_cdb_roles_claim_review() {
+        $email1 = "kodkod@fart.edu";
+        $email2 = "serval@fart.edu";
+        $u1 = $this->make_roleless_user($email1);
+        $this->make_roleless_user($email2);
+        $rrid = $this->user_chair->assign_review(4, $u1, REVIEW_EXTERNAL);
+        xassert($rrid > 0);
+        xassert_eqq($this->cdb_roles_for($email1), Contact::ROLE_REVIEWER);
+
+        // claimer was active recently, so claiming need not mark activity
+        $rev_open = $this->conf->setting("rev_open");
+        $this->conf->save_refresh_setting("rev_open", 1);
+        $u1 = $this->conf->checked_user_by_email($email1);
+        $u1->activity_at = Conf::$now;
+        $qsession = new MemoryQsession("fnoaiwnefoiwnf", ["us" => [$email1, $email2]]);
+        $paper4 = $this->conf->checked_paper_by_id(4);
+        $qreq = (new Qrequest("POST", ["p" => "4", "r" => "{$rrid}", "email" => $email2]))
+            ->set_qsession($qsession);
+        $result = RequestReview_API::claimreview($u1, $qreq, $paper4);
+        $this->conf->save_refresh_setting("rev_open", $rev_open);
+        xassert_eqq($result->content["ok"], true);
+        xassert_eqq($this->cdb_roles_for($email1), 0);
+        xassert_eqq($this->cdb_roles_for($email2), Contact::ROLE_REVIEWER);
+    }
+
+    function test_alert_tokens_reload() {
+        $u = $this->conf->fresh_user_by_email(self::MARINA);
+        xassert(!!$u->cdb_user());
+        $ca = new ContactAlerts($u);
+        $ca->append((object) ["name" => "cdbalert", "message_list" => [MessageItem::warning("<0>Cross-site alert")]], true);
+        $ca->append((object) ["name" => "localalert", "message_list" => [MessageItem::warning("<0>Local alert " . str_repeat("x", 100))]]);
+        $cdba = $ca->find_by_name("cdbalert")[0];
+        $locala = $ca->find_by_name("localalert")[0];
+        xassert_match($cdba->token, '/\Ahci\d+g_/');
+        xassert_match($locala->token, '/\Ahci\d+_/');
+
+        // a fresh load finds both tokens' messages
+        $u = $this->conf->fresh_user_by_email(self::MARINA);
+        $ca = new ContactAlerts($u);
+        $text = json_encode($ca->scoped_msg_content_list("home"));
+        xassert_str_contains($text, "Cross-site alert");
+        xassert_str_contains($text, "Local alert");
+        xassert(!!$ca->find($cdba->token));
+        xassert(!!$ca->find($locala->token));
+
+        $u->modify_data(function ($u) { $u->set_data("alerts", null); });
     }
 }

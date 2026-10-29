@@ -1,11 +1,20 @@
 <?php
 // api_mail.php -- HotCRP mail API calls
-// Copyright (c) 2008-2023 Eddie Kohler; see LICENSE.
+// Copyright (c) 2008-2026 Eddie Kohler; see LICENSE.
 
 class Mail_API {
     static function mailtext(Contact $user, Qrequest $qreq, ?PaperInfo $prow) {
-        if (!$user->isPC
-            || ($prow && !$user->can_view_paper($prow))) {
+        if (!$user->isPC) {
+            return JsonResult::make_permission_error();
+        }
+        if ($prow) {
+            $fr = $user->perm_view_paper($prow);
+        } else {
+            $fr = $qreq->p ? $qreq->annex("paper_whynot") : null;
+        }
+        if ($fr) {
+            return Conf::paper_error_json_result($fr);
+        } else if ($prow && $user->act_author_view($prow)) {
             return JsonResult::make_permission_error();
         }
 
@@ -17,11 +26,12 @@ class Mail_API {
         $mailinfo = [
             "prow" => $prow,
             "requester_contact" => $user,
-            "width" => $qreq->width ?? 10000,
-            "censor" => Mailer::CENSOR_DISPLAY
+            "width" => stoi($qreq->width) ?? 10000,
+            "censor" => Mailer::CENSOR_PREVIEW,
+            "preview" => true
         ];
         if (isset($qreq->reason)) {
-            $mailinfo["reason"] = $qreq->reason;
+            $mailinfo["reason"] = convert_to_utf8($qreq->reason);
         }
         $rid = $qreq->r;
         if ($prow) {
@@ -35,12 +45,12 @@ class Mail_API {
                 $mailinfo["rrow"] = $rrow;
             }
         }
-        $mailer = new HotCRPMailer($user->conf, $recipient, $mailinfo);
+        $mailer = new HotCRPMailer($user, $recipient, $mailinfo);
 
         if (isset($qreq->text) || isset($qreq->subject) || isset($qreq->body)) {
             $j = ["ok" => true];
             foreach (["text", "subject", "body"] as $k) {
-                $j[$k] = $mailer->expand($qreq[$k], $k);
+                $j[$k] = $mailer->expand(convert_to_utf8($qreq[$k] ?? ""), $k);
             }
             return $j;
         } else if (!$qreq->template) {
@@ -60,11 +70,12 @@ class Mail_API {
                 }
             }
             return ["ok" => true, "templates" => array_values($mtjs)];
-        } else if (($mt = $user->conf->mail_template($qreq->template, false, $user))) {
-            return ["ok" => true] + self::expand_template($user, $mailer, $recip, $mt);
-        } else {
-            return JsonResult::make_error(404, "<0>Template not found");
         }
+        $mt = $user->conf->mail_template($qreq->template, false, $user);
+        if (!$mt) {
+            return JsonResult::make_not_found_error("template");
+        }
+        return ["ok" => true] + self::expand_template($user, $mailer, $recip, $mt);
     }
 
     /** @param HotCRPMailer $mailer
@@ -100,25 +111,22 @@ class Mail_API {
             return JsonResult::make_missing_error("mailid");
         } else if (!$user->privChair) {
             return JsonResult::make_permission_error();
-        } else if (($row = $user->conf->fetch_first_object("select * from MailLog where mailId=?", $qreq->mailid))) {
-            if (self::can_view_maillog($user, $row)) {
-                $j = ["ok" => true];
-                foreach (["recipients", "q", "t", "cc", "subject"] as $field) {
-                    if ($row->$field !== null && $row->$field !== "")
-                        $j[$field] = $row->$field;
-                }
-                if ($row->replyto !== null) {
-                    $j["reply-to"] = $row->replyto;
-                }
-                if ($row->emailBody !== null) {
-                    $j["body"] = $row->emailBody;
-                }
-                return $j;
-            } else {
-                return JsonResult::make_permission_error();
-            }
-        } else {
-            return JsonResult::make_error(404, "<0>Email not found");
         }
+        $row = $user->conf->fetch_first_object("select * from MailLog where mailId=?", $qreq->mailid);
+        if (!$row || !self::can_view_maillog($user, $row)) {
+            return JsonResult::make_not_found_error("mailid");
+        }
+        $j = ["ok" => true];
+        foreach (["recipients", "q", "t", "cc", "subject"] as $field) {
+            if ($row->$field !== null && $row->$field !== "")
+                $j[$field] = $row->$field;
+        }
+        if ($row->replyto !== null) {
+            $j["reply-to"] = $row->replyto;
+        }
+        if ($row->emailBody !== null) {
+            $j["body"] = $row->emailBody;
+        }
+        return $j;
     }
 }

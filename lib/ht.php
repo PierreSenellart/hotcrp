@@ -1,10 +1,25 @@
 <?php
 // ht.php -- HotCRP HTML helper functions
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
+
+class HtEsc {
+    /** @var string */
+    public $str;
+    /** @param string $str */
+    function __construct($str) {
+        $this->str = $str;
+    }
+    #[\ReturnTypeWillChange]
+    function __toString() {
+        return $this->str;
+    }
+}
 
 class Ht {
     /** @var string */
     public static $img_base = "";
+    /** @var string */
+    public static $icons_url = "";
     /** @var string */
     private static $_script_open = "<script";
     /** @var ?non-empty-string
@@ -48,6 +63,41 @@ class Ht {
         "type" => self::ATTR_SKIP
     ];
 
+    /** @param string $str
+     * @return HtEsc */
+    static function preescape($str) {
+        if ($str === null) {
+            return null;
+        }
+        return new HtEsc(self::escape_attr($str));
+    }
+
+    /** @return string */
+    static private function unpreescape($str) {
+        if ($str instanceof HtEsc) {
+            return htmlspecialchars_decode($str->str);
+        }
+        return (string) $str;
+    }
+
+    /** @param string $str
+     * @return string */
+    static function escape_attr($str) {
+        return htmlspecialchars($str, ENT_HTML5 | ENT_COMPAT | ENT_SUBSTITUTE, "UTF-8");
+    }
+
+    /** @param string $str
+     * @return string */
+    static function escape_text($str) {
+        return htmlspecialchars($str, ENT_HTML5 | ENT_NOQUOTES | ENT_SUBSTITUTE, "UTF-8");
+    }
+
+    /** @param string $str
+     * @return string */
+    static function escape($str) {
+        return htmlspecialchars($str, ENT_HTML5 | ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8");
+    }
+
     /** @param ?string ...$tokens
      * @return string */
     static function add_tokens(...$tokens) {
@@ -81,8 +131,10 @@ class Ht {
                     $x .= " {$k}=\"" . ($v ? "true" : "false") . "\"";
                 } else if ($v === "") {
                     $x .= " {$k}";
+                } else if ($v instanceof HtEsc) {
+                    $x .= " {$k}=\"{$v->str}\"";
                 } else {
-                    $x .= " {$k}=\"" . str_replace("\"", "&quot;", $v) . "\"";
+                    $x .= " {$k}=\"" . self::escape_attr($v) . "\"";
                 }
             }
         }
@@ -97,7 +149,7 @@ class Ht {
             self::$_script_open = '<script';
         } else {
             self::$script_nonce = $nonce;
-            self::$_script_open = '<script nonce="' . htmlspecialchars($nonce) . '"';
+            self::$_script_open = '<script nonce="' . self::escape_attr($nonce) . '"';
         }
     }
 
@@ -121,14 +173,14 @@ class Ht {
             && !preg_match('/\A([a-z]+:)?\/\//', $src)) {
             unset($js["crossorigin"]);
         }
-        return self::$_script_open . ' src="' . htmlspecialchars($src) . '"' . self::extra($js) . '></script>';
+        return self::$_script_open . ' src="' . self::escape_attr($src) . '"' . self::extra($js) . '></script>';
     }
 
     /** @param string $src
      * @return string */
     static function stylesheet_file($src) {
         return "<link rel=\"stylesheet\" type=\"text/css\" href=\""
-            . htmlspecialchars($src) . "\">";
+            . self::escape_attr($src) . "\">";
     }
 
     /** @param string|array<string,mixed> $action
@@ -148,10 +200,10 @@ class Ht {
         $method = $extra["method"] ?? "post";
         if ($method === "get"
             && ($qpos = strpos($action, "?")) !== false) {
-            $decoded_query = htmlspecialchars_decode(substr($action, $qpos + 1));
+            $query = substr($action, $qpos + 1);
             $pos = 0;
-            while ($pos < strlen($decoded_query)
-                   && preg_match('/\G([^\#=&;]*)=([^\#&;]*)([\#&;]|\z)/', $decoded_query, $m, 0, $pos)) {
+            while ($pos < strlen($query)
+                   && preg_match('/\G([^\#=&]*+)=([^\#&]*+)([\#&]|\z)/', $query, $m, 0, $pos)) {
                 $suffix .= self::hidden(urldecode($m[1]), urldecode($m[2]));
                 $pos += strlen($m[0]);
                 if ($m[3] === "#") {
@@ -159,7 +211,7 @@ class Ht {
                     break;
                 }
             }
-            $action = substr($action, 0, $qpos) . htmlspecialchars((string) substr($decoded_query, $pos));
+            $action = substr($action, 0, $qpos) . (string) substr($query, $pos);
         }
 
         if (!isset($extra["enctype"]) && $method !== "get") {
@@ -171,7 +223,7 @@ class Ht {
             $x .= " method=\"{$method}\"";
         }
         if ($action !== "") {
-            $x .= " action=\"{$action}\"";
+            $x .= " action=\"" . self::escape_attr($action) . "\"";
         }
         return $x . ' accept-charset="UTF-8"' . $suffix;
     }
@@ -181,8 +233,8 @@ class Ht {
      * @param ?array<string,mixed> $extra
      * @return string */
     static function hidden($name, $value = "", $extra = null) {
-        return '<input type="hidden" name="' . htmlspecialchars($name)
-            . '" value="' . htmlspecialchars($value) . '"'
+        return '<input type="hidden" name="' . self::escape_attr($name)
+            . '" value="' . self::escape_attr($value) . '"'
             . self::extra($extra) . '>';
     }
 
@@ -232,12 +284,12 @@ class Ht {
                 $opts[] = $in_optgroup === "" ? "" : "</optgroup>";
                 $in_optgroup = $info["optgroup"] ?? $declared_optgroup;
                 if ($in_optgroup !== "") {
-                    $opts[] = '<optgroup label="' . htmlspecialchars($in_optgroup) . '">';
+                    $opts[] = '<optgroup label="' . self::escape_attr($in_optgroup) . '">';
                 }
             }
 
             $value = $info["value"] = $info["value"] ?? (string) $key;
-            $label = $info["label"] ?? $value;
+            $label = self::escape_text($info["label"] ?? $value);
             unset($info["label"], $info["type"], $info["optgroup"], $info["exclude"]);
             if (!isset($first_value)) {
                 $first_value = $value;
@@ -254,12 +306,13 @@ class Ht {
             $opts[] = "</optgroup>";
         }
 
-        $jsx = self::extra($js);
+        $nt = self::escape_attr($name);
+        $jst = self::extra($js);
         if (!isset($js["data-default-value"])
             && ($has_selected || isset($first_value))) {
-            $jsx .= ' data-default-value="' . htmlspecialchars($has_selected ? $selected : $first_value) . '"';
+            $jst .= ' data-default-value="' . self::escape_attr($has_selected ? $selected : $first_value) . '"';
         }
-        return "<span class=\"select\"><select name=\"{$name}\"{$jsx}>" . join("", $opts) . "</select></span>";
+        return "<span class=\"select\"><select name=\"{$nt}\"{$jst}>" . join("", $opts) . "</select></span>";
     }
 
     /** @param string $name
@@ -285,11 +338,12 @@ class Ht {
         }
         $t = '<input type="checkbox"'; /* NB see Ht::radio */
         if ((string) $name !== "") {
-            $t .= " name=\"{$name}\"";
+            $nt = self::escape_attr($name);
+            $t .= " name=\"{$nt}\"";
         }
         if ($value !== "" || (string) $name !== "") {
-            $v = htmlspecialchars((string) $value);
-            $t .= " value=\"{$v}\"";
+            $vt = self::escape_attr((string) $value);
+            $t .= " value=\"{$vt}\"";
         }
         if ($checked) {
             $t .= " checked";
@@ -318,7 +372,7 @@ class Ht {
         } else if ($id === null || $id === true) {
             $id = self::$_lastcontrolid;
         }
-        return '<label' . ($id ? ' for="' . $id . '"' : '')
+        return '<label' . ($id ? ' for="' . self::escape_attr($id) . '"' : '')
             . self::extra($js) . ">{$html}</label>";
     }
 
@@ -379,15 +433,15 @@ class Ht {
 
     private static function apply_placeholder(&$value, &$js) {
         $value = (string) $value;
-        if (isset($js["placeholder"]) && $value === (string) $js["placeholder"]) {
+        if (isset($js["placeholder"]) && $value === self::unpreescape($js["placeholder"])) {
             $value = "";
         }
-        if (isset($js["data-default-value"]) && $value === (string) $js["data-default-value"]) {
+        if (isset($js["data-default-value"]) && $value === self::unpreescape($js["data-default-value"])) {
             unset($js["data-default-value"]);
         }
     }
 
-    /** @param string $name
+    /** @param ?string $name
      * @param string|int $value
      * @param ?array<string,mixed> $js
      * @return string */
@@ -395,9 +449,14 @@ class Ht {
         $js = $js ?? [];
         self::apply_placeholder($value, $js);
         $type = $js["type"] ?? "text";
-        $vt = htmlspecialchars($value);
+        if ((string) $name !== "") {
+            $nt = " name=\"" . self::escape_attr($name) . "\"";
+        } else {
+            $nt = "";
+        }
+        $vt = self::escape_attr($value);
         $jst = self::extra($js);
-        return "<input type=\"{$type}\" name=\"{$name}\" value=\"{$vt}\"{$jst}>";
+        return "<input type=\"{$type}\"{$nt} value=\"{$vt}\"{$jst}>";
     }
 
     /** @param string $name
@@ -417,9 +476,10 @@ class Ht {
     static function textarea($name, $value, $js = null) {
         $js = $js ?? [];
         self::apply_placeholder($value, $js);
-        $vt = htmlspecialchars($value);
+        $nt = self::escape_attr($name);
+        $vt = self::escape_text($value);
         $jst = self::extra($js);
-        return "<textarea name=\"{$name}\"{$jst}>{$vt}</textarea>";
+        return "<textarea name=\"{$nt}\"{$jst}>{$vt}</textarea>";
     }
 
     /** @param list<string|list<string>> $actions
@@ -473,7 +533,7 @@ class Ht {
         } else if (is_array($text) || is_object($text)) {
             $text = var_export($text, true);
         }
-        return "<pre>" . htmlspecialchars($text) . "</pre>";
+        return "<pre>" . self::escape_text($text) . "</pre>";
     }
 
     /** @return string */
@@ -485,12 +545,12 @@ class Ht {
         } else if (is_array($text) || is_object($text)) {
             $text = var_export($text, true);
         }
-        return "<pre style=\"white-space:pre-wrap\">" . htmlspecialchars($text) . "</pre>";
+        return "<pre style=\"white-space:pre-wrap\">" . self::escape_text($text) . "</pre>";
     }
 
     /** @return string */
     static function pre_export($x) {
-        return "<pre style=\"white-space:pre-wrap\">" . htmlspecialchars(var_export($x, true)) . "</pre>";
+        return "<pre style=\"white-space:pre-wrap\">" . self::escape_text(var_export($x, true)) . "</pre>";
     }
 
     /** @param string $src
@@ -501,57 +561,86 @@ class Ht {
         if (is_string($js)) {
             $js = ["class" => $js];
         }
-        if (self::$img_base && !preg_match('/\A(?:https?:\/|\/)/i', $src)) {
+        if (self::$img_base
+            && !str_starts_with($src, "/")
+            && substr_compare($src, "http:", 0, 5, true) !== 0
+            && substr_compare($src, "https:", 0, 6, true) !== 0) {
             $src = self::$img_base . $src;
         }
-        $altt = htmlspecialchars($alt);
+        $src = self::escape_attr($src);
+        $altt = self::escape_attr($alt);
         $jst = self::extra($js);
         return "<img src=\"{$src}\" alt=\"{$altt}\"{$jst}>";
     }
 
     /** @return string */
-    static private function make_link($html, $href, $js) {
-        if ($js === null) {
-            $js = [];
-        }
-        if (!isset($js["href"])) {
-            $js["href"] = isset($href) ? $href : "";
-        }
-        if (isset($js["onclick"]) && !preg_match('/(?:^return|;)/', $js["onclick"])) {
-            $js["onclick"] = "return " . $js["onclick"];
-        }
-        if (isset($js["onclick"])
-            && (!isset($js["class"]) || !preg_match('/(?:\A|\s)(?:ui|btn|lla|tla)(?=\s|\z)/', $js["class"]))) {
-            error_log(caller_landmark(2) . ": JS Ht::link lacks class");
+    static function link($html, $href, $js = null) {
+        if ($js === null && is_array($href)) {
+            $js = $href;
+        } else {
+            $js = $js ?? [];
+            $js["href"] = $href ?? "";
         }
         return "<a" . self::extra($js) . ">{$html}</a>";
     }
 
-    /** @return string */
-    static function link($html, $href, $js = null) {
-        if ($js === null && is_array($href)) {
-            return self::make_link($html, null, $href);
+    /** @param string $name
+     * @param array<string,mixed> $js
+     * @return string */
+    static function make_icon($name, $js = []) {
+        if (empty($js)
+            || (!array_key_exists("aria-hidden", $js)
+                && !isset($js["aria-label"])
+                && !isset($js["aria-labelledby"]))) {
+            $js["aria-hidden"] = "true";
         }
-        return self::make_link($html, $href, $js);
+        return '<svg' . Ht::extra($js) . "><use href=\"" . Ht::escape_attr(self::$icons_url . "#{$name}") . "\" /></svg>";
+    }
+
+    /** @param string $name
+     * @param null|'s'|'m'|'l' $size
+     * @return string */
+    static function make_licon($name, $size = null) {
+        $size = $size ?? "l";
+        return self::make_icon($name, ["class" => "licon licon-{$size}"]);
+    }
+
+    /** @return string
+     * @deprecated */
+    static function link_raw($html, $href, $js = null) {
+        return self::link($html, $href, $js);
+    }
+
+    /** @return string */
+    static function wrap($tag, $html, $js = null) {
+        $jst = self::extra($js);
+        if ($tag === "span?") {
+            if ($jst === "") {
+                return $html;
+            }
+            $tag = "span";
+        }
+        return "<{$tag}{$jst}>{$html}</{$tag}>";
     }
 
     /** @param string $html
      * @return string */
     static function link_urls($html) {
-        return preg_replace('/((?:https?|ftp):\/\/(?:[^\s<>"&]|&amp;)*[^\s<>"().,:;?!&])(["().,:;?!]*)(?=[\s<>&]|\z)/s', '<a href="$1" rel="noreferrer">$1</a>$2', $html);
+        // Linear-time linkifier
+        return preg_replace('/(?<!\w)((?:https?|ftp):\/\/(?:[^\s<>"&().,:;?!]|&amp;|[().,:;?!]++(?=[^\s<>"&().,:;?!]|&amp;))++)([().,:;?!]*+)(?=[\s<>"&]|\z)/s', '<a href="$1" rel="noreferrer">$1</a>$2', $html);
     }
 
     /** @param string $text
      * @return string */
     static function format0($text) {
-        return self::format0_html(htmlspecialchars($text));
+        return self::format0_html(self::escape_text($text));
     }
 
     /** @param string $html
      * @return string */
     static function format0_html($html) {
         $html = self::link_urls(Text::single_line_paragraphs($html));
-        return preg_replace('/(?:\r\n?){2,}|\n{2,}/', "</p><p>", "<p>$html</p>");
+        return preg_replace('/(?:\r\n?){2,}|\n{2,}/', "</p><p>", "<p>{$html}</p>");
     }
 
     /** @param string $uniqueid
@@ -622,45 +711,72 @@ class Ht {
      * @param int $pos2
      * @return array{string,int,int} */
     static function make_mark_substring($s, $pos1, $pos2) {
-        if ($pos1 > strlen($s) || $pos2 > strlen($s)) {
+        if ($pos1 < 0) {
+            return [$s, -1, 0];
+        } else if ($pos1 > strlen($s) || $pos2 > strlen($s)) {
             error_log("bad arguments [{$pos1}, {$pos2}, " . strlen($s) . "]: " . debug_string_backtrace());
             return [$s, 0, 0];
         }
         $pos2 = max($pos1, $pos2);
-        if ($pos1 > 0
-            && ($nl = strrpos($s, "\n", $pos1 - strlen($s))) !== false) {
-            $s = substr($s, $nl + 1);
-            $pos1 -= $nl + 1;
-            $pos2 -= $nl + 1;
+        if (strlen($s) <= 53 && strpos($s, "\n") === false) {
+            return [$s, $pos1, $pos2];
         }
-        if (($nl = strpos($s, "\n", $pos2)) !== false) {
-            $s = substr($s, 0, $nl);
-        }
-        $pos1x = max(0, min($pos1 - 17, strlen($s) - 64));
-        if ($pos1x > 0) {
-            $pfxlen = $pos1 - $pos1x;
-            while ($pos1x > 0
-                   && UnicodeHelper::utf8_glyphlen(substr($s, $pos1x, $pos1 - $pos1x)) < $pfxlen) {
-                --$pos1x;
+        // create a grapheme cluster analyzer
+        // (analyze() looks at a constant # of bytes, not O(strlen($s)).)
+        $clusters = UnicodeHelper::utf8_clusters($s, $pos1 - 2000, $pos2 + 2000)->analyze();
+        // find left boundary
+        $bpos1 = $clusters->glyphstep($pos1, -17);
+        $nl1 = $bpos1 + strcspn($s, "\n", $bpos1, $pos1 - $bpos1);
+        if ($nl1 !== $pos1) {
+            while (($d = strcspn($s, "\n", $nl1 + 1, $pos1 - $nl1 - 1)) !== $pos1 - $nl1 - 1) {
+                $nl1 += $d + 1;
             }
-            $s = "…" . substr($s, $pos1x);
-            $pos1 -= $pos1x - 3; /* ellipsis character UTF-8 encoding is 3 bytes long */
-            $pos2 -= $pos1x - 3;
         }
-        if ($pos2 - $pos1 > 12) {
-            $lpos = $pos2;
-            $llen = max(64 - $lpos, 12);
-        } else {
-            $lpos = $pos1;
-            $llen = max(64 - $lpos, 24);
-        }
-        if (strlen($s) > $lpos + $llen) {
-            $ml = $llen - 1;
-            while ($lpos + $ml < strlen($s)
-                   && UnicodeHelper::utf8_glyphlen(substr($s, $lpos, $ml)) < $llen - 1) {
-                ++$ml;
+        // find right boundary
+        $hllen = $clusters->glyphlen($pos1, $pos2, 24);
+        $bpos2 = $clusters->glyphstep($pos2, max(12, 36 - $hllen));
+        $nl2 = $pos2 + strcspn($s, "\n", $pos2, $bpos2 - $pos2);
+        // include newline glyphs in result?
+        $shownl = $hllen <= 12 && ($nl1 < $pos1 || $nl2 < $bpos2);
+        // if not showing newlines, broaden to line boundaries
+        if (!$shownl) {
+            if ($nl1 < $pos1) {
+                $bpos1 = $nl1 + 1;
             }
-            $s = substr($s, 0, $lpos + $ml) . "…";
+            if ($nl2 < $bpos2) {
+                $bpos2 = $nl2;
+            }
+            if (($bpos1 === 0 || $s[$bpos1 - 1] === "\n")
+                && $bpos2 !== strlen($s)
+                && $s[$bpos2] !== "\n"
+                && ($xpos2 = $clusters->glyphstep($bpos1, 53)) > $bpos2) {
+                $bpos2 += strcspn($s, "\n", $bpos2, $xpos2 - $bpos2);
+            } else if (($bpos2 === strlen($s) || $s[$bpos2] === "\n")
+                       && $bpos1 !== 0
+                       && $s[$bpos1 - 1] !== "\n"
+                       && ($xpos1 = $clusters->glyphstep($bpos2, -53)) < $bpos1) {
+                while (($d = strcspn($s, "\n", $xpos1, $bpos1 - $xpos1)) < $bpos1 - $xpos1) {
+                    $xpos1 += $d + 1;
+                }
+                $bpos1 = $xpos1;
+            }
+        }
+        // substring + ellipses if line continues
+        if ($bpos1 !== 0 || $bpos2 !== strlen($s)) {
+            $leftdots = $bpos1 > 0 && $s[$bpos1 - 1] !== "\n";
+            $rightdots = $bpos2 < strlen($s) && $s[$bpos2] !== "\n";
+            $s = ($leftdots ? "…" : "")
+                . substr($s, $bpos1, $bpos2 - $bpos1)
+                . ($rightdots ? "…" : "");
+            $shift = $leftdots ? $bpos1 - 3 /* ellipsis */ : $bpos1;
+            $pos1 -= $shift;
+            $pos2 -= $shift;
+        }
+        if ($shownl) {
+            $s0 = str_replace("\n", "⏎", substr($s, 0, $pos1));
+            $s1 = str_replace("\n", "⏎", substr($s, $pos1, $pos2 - $pos1));
+            $s2 = str_replace("\n", "⏎", substr($s, $pos2));
+            return [$s0 . $s1 . $s2, strlen($s0), strlen($s0) + strlen($s1)];
         }
         return [$s, $pos1, $pos2];
     }
@@ -671,16 +787,18 @@ class Ht {
      * @param ?int $status
      * @return string */
     static function mark_substring($s, $pos1, $pos2, $status = 2) {
-        list($s, $pos1, $pos2) = self::make_mark_substring($s, $pos1, $pos2);
-        $h0 = htmlspecialchars(substr($s, 0, $pos1));
-        $h1 = htmlspecialchars(substr($s, $pos1, $pos2 - $pos1));
-        $h2 = htmlspecialchars(substr($s, $pos2));
+        [$s, $pos1, $pos2] = self::make_mark_substring($s, $pos1, $pos2);
+        if ($pos1 < 0) {
+            return self::escape_text($s);
+        }
+        $h0 = self::escape_text(substr($s, 0, $pos1));
+        $h1 = self::escape_text(substr($s, $pos1, $pos2 - $pos1));
+        $h2 = self::escape_text(substr($s, $pos2));
         $k = $status > 1 ? "is-error" : "is-warning";
         if ($pos2 > $pos1 + 2) {
             return "{$h0}<span class=\"context-mark {$k}\">{$h1}</span>{$h2}";
-        } else {
-            return "{$h0}<span class=\"context-caret-mark {$k}\">{$h1}</span>{$h2}";
         }
+        return "{$h0}<span class=\"context-caret-mark {$k}\">{$h1}</span>{$h2}";
     }
 
     /** @param string $s
@@ -689,7 +807,10 @@ class Ht {
      * @param string $indent
      * @return string */
     static function mark_substring_text($s, $pos1, $pos2, $indent = "") {
-        list($s, $pos1, $pos2) = self::make_mark_substring($s, $pos1, $pos2);
+        [$s, $pos1, $pos2] = self::make_mark_substring($s, $pos1, $pos2);
+        if ($pos1 < 0) {
+            return $s . "\n";
+        }
         $i0 = str_repeat(" ", UnicodeHelper::utf8_glyphlen(substr($s, 0, $pos1)));
         $gl1 = UnicodeHelper::utf8_glyphlen(substr($s, $pos1, $pos2 - $pos1));
         $x = strtr($s, "\n", " ");
@@ -706,21 +827,26 @@ class Ht {
     }
 
     /** @param int $status
+     * @param string $extra_class
      * @return string */
-    static function msg_class($status) {
+    static function msg_class($status, $extra_class = "") {
         if ($status >= 2 || $status === -1 /* MessageSet::URGENT_NOTE */) {
-            return "msg msg-error";
+            $s = "msg msg-error";
         } else if ($status > 0 || $status === -2 /* MessageSet::WARNING_NOTE */) {
-            return "msg msg-warning";
+            $s = "msg msg-warning";
         } else if ($status === -3 /* MessageSet::SUCCESS */) {
-            return "msg msg-confirm";
+            $s = "msg msg-confirm";
+        } else {
+            $s = "msg msg-info";
         }
-        return "msg msg-info";
+        return $extra_class === "" ? $s : "{$s} {$extra_class}";
     }
 
     /** @param string $msg
-     * @param int $status */
-    static function msg($msg, $status) {
+     * @param int $status
+     * @param string $extra_class
+     * @return string */
+    static function msg($msg, $status, $extra_class = "") {
         assert(is_int($status));
         $mx = "";
         foreach (is_array($msg) ? $msg : [$msg] as $x) {
@@ -735,42 +861,43 @@ class Ht {
         if ($mx === "") {
             return "";
         }
-        return "<div class=\"" . self::msg_class($status) . "\">{$mx}</div>";
+        $mc = self::msg_class($status, $extra_class);
+        return "<div class=\"{$mc}\">{$mx}</div>";
     }
 
     /** @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
      * @return array{string,int} */
     static function feedback_msg_content(...$mls) {
         $mlx = MessageSet::make_list(...$mls);
-        if (($h = MessageSet::feedback_html($mlx)) !== "") {
-            return [$h, MessageSet::list_status($mlx)];
+        if (($h = MessageSet::feedback_html($mlx)) === "") {
+            return null;
         }
-        return ["", 0];
+        return [$h, MessageSet::list_status($mlx)];
     }
 
     /** @param Fmt|Conf $fmt
      * @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
-     * @return array{string,int} */
+     * @return ?array{string,int} */
     static function fmt_feedback_msg_content($fmt, ...$mls) {
         $mlx = MessageSet::make_fmt_list($fmt, ...$mls);
-        if (($h = MessageSet::feedback_html($mlx)) !== "") {
-            return [$h, MessageSet::list_status($mlx)];
+        if (($h = MessageSet::feedback_html($mlx)) === "") {
+            return null;
         }
-        return ["", 0];
+        return [$h, MessageSet::list_status($mlx)];
     }
 
     /** @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
      * @return string */
     static function feedback_msg(...$mls) {
-        $ms = self::feedback_msg_content(...$mls);
-        return $ms[0] === "" ? "" : self::msg($ms[0], $ms[1]);
+        $mx = self::feedback_msg_content(...$mls);
+        return $mx ? self::msg($mx[0], $mx[1]) : "";
     }
 
     /** @param Fmt|Conf $fmt
      * @param MessageItem|iterable<MessageItem>|MessageSet ...$mls
      * @return string */
     static function fmt_feedback_msg($fmt, ...$mls) {
-        $ms = self::fmt_feedback_msg_content($fmt, ...$mls);
-        return $ms[0] === "" ? "" : self::msg($ms[0], $ms[1]);
+        $mx = self::fmt_feedback_msg_content($fmt, ...$mls);
+        return $mx ? self::msg($mx[0], $mx[1]) : "";
     }
 }

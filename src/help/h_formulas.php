@@ -12,7 +12,7 @@ merit among reviewers with high Reviewer expertise.</p>
 <p>To display a formula, use a search term such as “",
 $hth->search_link("show:var(OveMer)"), "” (show
 the variance in Overall merit scores, along with statistics for all papers).
-You can also ", $hth->hotlink("graph formulas", "graph", "group=formula"), ".
+You can also ", $hth->hotlink("graph formulas", "graph", ["group" => "formula"]), ".
 To search for a formula, use a search term such as “",
 $hth->search_link("formula:var(OveMer)>0.5"), "”
 (select papers with variance in Overall merit greater than 0.5).
@@ -126,6 +126,7 @@ Use an aggregate function to calculate a property over all review scores.</p>";
         echo $hth->trow("wavg(<em>e</em>, <em>weight</em>)", "Weighted average; equals “sum(<em>e</em> * <em>weight</em>) / sum(<em>weight</em>)”");
         echo $hth->trow("median(<em>e</em>)", "Median");
         echo $hth->trow("quantile(<em>e</em>, <em>p</em>)", "Quantile; 0≤<em>p</em>≤1; 0 yields min, 0.5 median, 1 max");
+        echo $hth->trow("p95(<em>e</em>)", "95th percentile (any percentile works)");
         echo $hth->trow("stddev(<em>e</em>)", "Population standard deviation");
         echo $hth->trow("var(<em>e</em>)", "Population variance");
         echo $hth->trow("stddev_samp(<em>e</em>), var_samp(<em>e</em>)", "Sample standard deviation, sample variance");

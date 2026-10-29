@@ -1,6 +1,6 @@
 <?php
 // a_preference.php -- HotCRP assignment helper classes
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Preference_Assignable extends Assignable {
     /** @var int */
@@ -47,27 +47,43 @@ class Preference_AssignmentParser extends AssignmentParser {
         return true;
     }
     function expand_any_user(PaperInfo $prow, $req, AssignmentState $state) {
-        if ($state->user->can_administer($prow)) {
-            return $state->pc_users();
-        } else {
-            return [$state->user];
+        if ($state->user->can_manage_reviews($prow)) {
+            return $state->pc_members();
         }
+        return [$state->user];
     }
     function expand_missing_user(PaperInfo $prow, $req, AssignmentState $state) {
         return $state->reviewer->isPC ? [$state->reviewer] : null;
     }
+    /** @param bool $skip_poison
+     * @return string */
+    static function cannot_edit_preference_message(Contact $viewer, PaperInfo $prow, Contact $user, $skip_poison = false) {
+        if ($viewer->contactId === $user->contactId) {
+            return $prow->conf->_("<0>You can’t enter a preference for {submission} #{}", $prow->paperId);
+        } else if (!$viewer->can_manage_reviews($prow)) {
+            return $prow->conf->_("<0>You can’t administer {submission} #{}", $prow->paperId);
+        } else if ($user->contactId === 0 && $skip_poison) {
+            return "";
+        } else if (!$user->isPC) {
+            return "<0>Only PC members can enter preferences";
+        }
+        return $prow->conf->_("<0>User {$user->email} can’t enter a preference for {submission} #{}", $prow->paperId);
+    }
     function allow_user(PaperInfo $prow, Contact $user, $req, AssignmentState $state) {
-        if (!$user->contactId) {
-            return false;
+        if ($state->user->can_edit_preference_for($prow, $user)) {
+            return $user->contactId > 0;
         }
-        if ($state->user->contactId !== $user->contactId) {
-            if (!$state->user->can_administer($prow)) {
-                return new AssignmentError($prow->failure_reason(["administer" => true]));
-            } else if (!$user->isPC) {
-                return new AssignmentError("<0>User ‘{$user->email}’ is not a PC member");
-            }
+        // Cannot edit this preference. If the acting user cannot even view the
+        // submission, report its non-viewability with the same masked reason as
+        // a missing paper, so a hidden-track submission is indistinguishable
+        // from a nonexistent one (mirroring Preference_API); otherwise explain
+        // why the preference cannot be entered.
+        if (($whynot = $state->user->perm_view_paper($prow))) {
+            $state->paper_error($whynot);
+        } else if (($m = self::cannot_edit_preference_message($state->user, $prow, $user, true))) {
+            $state->paper_error($m);
         }
-        return true;
+        return false;
     }
     static private function make_exp($exp) {
         return $exp === null ? "N" : +$exp;
@@ -172,6 +188,9 @@ class Preference_Assigner extends Assigner {
     static function make(AssignmentItem $item, AssignmentState $state) {
         return new Preference_Assigner($item, $state);
     }
+    function about() {
+        return SearchTerm::ABOUT_PREFS;
+    }
     function unparse_description() {
         return "preference";
     }
@@ -185,7 +204,7 @@ class Preference_Assigner extends Assigner {
         return new PaperReviewPreference($pref, $exp);
     }
     function unparse_display(AssignmentSet $aset) {
-        if (!$this->cid) {
+        if (!$this->cid()) {
             return "remove all preferences";
         }
         $t = $aset->user->reviewer_html_for($this->contact);
@@ -211,6 +230,6 @@ class Preference_Assigner extends Assigner {
         $locks["PaperReviewPreference"] = "write";
     }
     function execute(AssignmentSet $aset) {
-        $this->preference_data(false)->save($this->pid, $this->cid, [$aset, "stage_qe"]);
+        $this->preference_data(false)->save($this->pid, $this->cid(), [$aset, "stage_qe"]);
     }
 }

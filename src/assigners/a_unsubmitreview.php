@@ -1,6 +1,6 @@
 <?php
 // a_unsubmitreview.php -- HotCRP assignment helper classes
-// Copyright (c) 2006-2022 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class UnsubmitReview_AssignmentParser extends AssignmentParser {
     function __construct() {
@@ -10,10 +10,10 @@ class UnsubmitReview_AssignmentParser extends AssignmentParser {
         Review_AssignmentParser::load_review_state($state);
     }
     function allow_paper(PaperInfo $prow, AssignmentState $state) {
-        return $state->user->can_administer($prow);
+        return $state->user->can_manage_reviews($prow);
     }
     function user_universe($req, AssignmentState $state) {
-        return "reviewers";
+        return self::UU_REVIEWERS;
     }
     /** @param 'pid'|'cid' $key
      * @param ?int $pid
@@ -39,9 +39,14 @@ class UnsubmitReview_AssignmentParser extends AssignmentParser {
         return $this->expand_any_user($prow, $req, $state);
     }
     function allow_user(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
-        return $contact->contactId != 0;
+        // a user not found among the reviewers has no review to unsubmit
+        return $contact->contactId !== 0
+            || $contact === $state->not_found_user();
     }
     function apply(PaperInfo $prow, Contact $contact, $req, AssignmentState $state) {
+        if ($contact === $state->not_found_user()) {
+            return false;
+        }
         // parse round and reviewtype arguments
         $rarg0 = trim((string) $req["round"]);
         $oldround = null;

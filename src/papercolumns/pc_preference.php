@@ -1,6 +1,6 @@
 <?php
 // pc_preference.php -- HotCRP helper classes for paper list content
-// Copyright (c) 2006-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2006-2026 Eddie Kohler; see LICENSE.
 
 class Preference_PaperColumn extends PaperColumn {
     /** @var bool */
@@ -11,6 +11,8 @@ class Preference_PaperColumn extends PaperColumn {
     private $user;
     /** @var bool */
     private $not_me;
+    /** @var int */
+    private $view_bound;
     /** @var string */
     private $prefix;
     /** @var bool */
@@ -42,7 +44,7 @@ class Preference_PaperColumn extends PaperColumn {
         $this->user = $this->user ?? $pl->reviewer_user();
         $this->not_me = $this->user->contactId !== $this->viewer->contactId;
         if (!$this->viewer->isPC
-            || ($this->not_me && !$this->viewer->can_view_preference(null))) {
+            || $this->viewer->view_preference_state(null) < ($this->not_me ? Contact::VIEWPREF_ALLOW_ALL : Contact::VIEWPREF_OWN)) {
             return false;
         }
         $this->editable = $this->view_option("edit") ?? false;
@@ -59,14 +61,12 @@ class Preference_PaperColumn extends PaperColumn {
         if ($this->as_row) {
             $this->prefix = $this->viewer->reviewer_html_for($this->user) . " ";
         }
+        $this->view_bound = $this->not_me ? Contact::VIEWPREF_ALLOW_ALL : Contact::VIEWPREF_OWN;
         return true;
     }
     /** @return PaperReviewPreference */
     private function sortable_preference(PaperInfo $row) {
-        if ($this->not_me
-            && ($this->editable
-                ? !$this->viewer->allow_view_preference($row)
-                : !$this->viewer->can_view_preference($row))) {
+        if ($this->viewer->view_preference_state($row) < $this->view_bound) {
             return PaperReviewPreference::make_sentinel();
         }
         $pf = $row->preference($this->user);
@@ -115,14 +115,15 @@ class Preference_PaperColumn extends PaperColumn {
         return $this->viewer->reviewer_html_for($this->user) . "<br>preference";
     }
     function content_empty(PaperList $pl, PaperInfo $row) {
-        return $this->not_me && !$this->viewer->allow_view_preference($row);
+        return $this->viewer->view_preference_state($row) < $this->view_bound;
     }
     function content(PaperList $pl, PaperInfo $row) {
         $pf = $row->preference($this->user);
         $pf_exists = $pf->exists();
         $conflicted = $row->has_conflict($this->user);
         $editable = $this->editable
-            && ($this->all || $this->user->pc_track_assignable($row));
+            && ($this->all || $this->user->pc_track_assignable($row))
+            && $pl->user->can_edit_preference_for($row, $this->user);
 
         // compute HTML
         $t = "";
@@ -141,7 +142,7 @@ class Preference_PaperColumn extends PaperColumn {
                 $t .= " " . review_type_icon(-1);
             }
         } else if (!$conflicted || $pf_exists) {
-            $t = str_replace("-", "−" /* U+2212 */, $pf->unparse());
+            $t = $pf->unparse_fancy();
         } else if ($this->show_conflict) {
             $t = review_type_icon(-1);
         }
@@ -149,7 +150,7 @@ class Preference_PaperColumn extends PaperColumn {
         // account for statistics and maybe wrap HTML in conflict
         if ($this->not_me
             && !$editable
-            && !$pl->user->can_view_preference($row)
+            && $this->viewer->view_preference_state($row) === Contact::VIEWPREF_ALLOW_ALL
             && $t !== "") {
             $tag = $this->as_row ? "div" : "span";
             $t = "<{$tag} class=\"fx5\">{$t}</{$tag}>";
@@ -163,7 +164,7 @@ class Preference_PaperColumn extends PaperColumn {
         return $t;
     }
     function text(PaperList $pl, PaperInfo $row) {
-        if ($this->not_me && !$this->viewer->can_view_preference($row)) {
+        if ($this->viewer->view_preference_state($row) < $this->view_bound) {
             return "";
         }
         return $row->preference($this->user)->unparse();
@@ -181,20 +182,20 @@ class Preference_PaperColumn extends PaperColumn {
         }
         $rs = [];
         foreach (ContactSearch::make_pc($m[1], $xtp->user)->users() as $u) {
-            if ($u->roles & Contact::ROLE_PC) {
+            if ($u->is_pc_member()) {
                 $fj["name"] = "pref:{$u->email}";
                 $fj["user"] = $u->email;
                 $rs[] = (object) $fj;
             }
         }
         if (empty($rs)) {
-            PaperColumn::column_error($xtp, "<0>PC member ‘{$m[1]}’ not found");
+            PaperColumn::column_error_at($xtp, $name, "<0>PC member ‘{$m[1]}’ not found");
         }
         return $rs;
     }
 
     static function examples(Contact $user, $xfj) {
-        if (!$user->can_view_preference(null)) {
+        if ($user->view_preference_state(null) <= Contact::VIEWPREF_OWN) {
             return [];
         }
         return [new SearchExample("pref:{user}", "<0>Review preference for PC member",

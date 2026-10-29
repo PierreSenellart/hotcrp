@@ -1,6 +1,6 @@
 <?php
 // formulas/f_author.php -- HotCRP helper class for formula expressions
-// Copyright (c) 2009-2025 Eddie Kohler; see LICENSE.
+// Copyright (c) 2009-2026 Eddie Kohler; see LICENSE.
 
 class Author_Fexpr extends Fexpr {
     private $matchtype;
@@ -31,7 +31,7 @@ class Author_Fexpr extends Fexpr {
             $arg = substr($arg, 1);
         }
         $csm = new ContactSearch(ContactSearch::F_TAG, $arg, $ff->user);
-        if (!$csm->has_error()) {
+        if ($csm->resolved()) {
             $ff->modifier = $csm->user_ids();
         } else if (!str_starts_with($arg, "#")) {
             $ff->modifier = Text::star_text_pregexes($arg);
@@ -39,6 +39,9 @@ class Author_Fexpr extends Fexpr {
             return false;
         }
         return true;
+    }
+    function about() {
+        return SearchTerm::ABOUT_SUB;
     }
     function compile(FormulaCompiler $state) {
         $prow = $state->_prow();

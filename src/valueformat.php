@@ -37,6 +37,11 @@ abstract class ValueFormat {
         return $this->vhtml($x);
     }
 
+    /** @return ?string */
+    function color_classes($x) {
+        return null;
+    }
+
     /** @return ValueFormat */
     function difference_format() {
         return $this;
@@ -44,6 +49,11 @@ abstract class ValueFormat {
 
     /** @return ValueFormat */
     function sum_format() {
+        return $this;
+    }
+
+    /** @return ValueFormat */
+    function mean_format() {
         return $this;
     }
 }
@@ -199,9 +209,8 @@ class Duration_ValueFormat extends ValueFormat {
             return $t . sprintf("%.1fh", $x / 3600);
         } else if ($x > 59) {
             return $t . sprintf("%.1fm", $x / 60);
-        } else {
-            return $t . sprintf("%.1fs", $x);
         }
+        return $t . sprintf("%.1fs", $x);
     }
 }
 
@@ -214,17 +223,19 @@ class User_ValueFormat extends ValueFormat {
     }
 
     function vtext($x) {
-        if ($x <= 0 || (int) $x != $x) {
-            return "";
-        }
-        return $this->user->name_text_for((int) $x);
+        $v = (int) $x;
+        return $v > 0 && $v == $x ? $this->user->name_text_for($v) : "";
     }
 
     function vhtml($x) {
-        if ($x <= 0 || (int) $x != $x) {
-            return "";
-        }
-        return $this->user->reviewer_html_for((int) $x);
+        $v = (int) $x;
+        return $v > 0 && $v == $x ? $this->user->reviewer_html_for($v) : "";
+    }
+
+    function color_classes($x) {
+        $v = (int) $x;
+        $u = $v > 0 && $v == $x ? $this->user->conf->user_by_id($v) : null;
+        return $u ? $u->viewable_color_classes($this->user) : null;
     }
 
     function difference_format() {
@@ -232,6 +243,10 @@ class User_ValueFormat extends ValueFormat {
     }
 
     function sum_format() {
+        return Null_ValueFormat::main();
+    }
+
+    function mean_format() {
         return Null_ValueFormat::main();
     }
 }
@@ -250,6 +265,10 @@ class ReviewField_ValueFormat extends ValueFormat {
 
     function vhtml($x) {
         return $this->rf->unparse_span_html($x);
+    }
+
+    function color_classes($x) {
+        return $this->rf->value_class($x);
     }
 
     function difference_format() {
@@ -280,12 +299,18 @@ class SubmissionField_ValueFormat extends ValueFormat {
 
     function vtext($x) {
         $this->fr->set_context(FieldRender::CFTEXT | FieldRender::CFCSV | FieldRender::CFVERBOSE);
+        if (is_float($x)) {
+            $x = (int) round($x);
+        }
         $this->sf->render($this->fr, PaperValue::make($this->prow, $this->sf, $x));
         return $this->fr->value_text();
     }
 
     function vhtml($x) {
         $this->fr->set_context(FieldRender::CFHTML);
+        if (is_float($x)) {
+            $x = (int) round($x);
+        }
         $this->sf->render($this->fr, PaperValue::make($this->prow, $this->sf, $x));
         return $this->fr->value_html();
     }

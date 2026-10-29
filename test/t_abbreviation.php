@@ -64,6 +64,24 @@ class Abbreviation_Tester {
         xassert_eqq($am->find_all("?"), [8]);
     }
 
+    function test_empty_pattern() {
+        $am = new AbbreviationMatcher;
+        $am->add_phrase("Solitude", 1);
+        // an empty pattern matches nothing, even against a lone entry
+        xassert_eqq($am->find_all(""), []);
+        xassert_eqq($am->find1(""), null);
+        xassert_eqq($am->find_entries(""), []);
+
+        // ...and its cached no-match must not suppress later analysis
+        $am->add_phrase("Solidarity", 2);
+        xassert_eqq($am->find_all("solid"), [2]);
+        xassert_eqq($am->find_all("sol"), [1, 2]);
+        xassert_eqq($am->find_all(""), []);
+        $am->add_keyword("solo", 3);
+        xassert_eqq($am->find_all("solo"), [3]);
+        xassert_eqq($am->find_all(""), []);
+    }
+
     function test_suffixes() {
         $am = new AbbreviationMatcher;
         $am->add_phrase("Overall merit", 0);
@@ -254,6 +272,59 @@ class Abbreviation_Tester {
         xassert_eqq($am->find_all("opt-2"), [-2]);
     }
 
+    function test_option_list_find() {
+        $conf = $this->conf;
+        $saved_options = $conf->setting_data("options");
+        $conf->save_refresh_setting("options", 1, json_encode([
+            ["id" => 1, "name" => "Calories", "type" => "numeric", "order" => 1],
+            ["id" => 2, "name" => "Attachments", "type" => "attachments", "order" => 2],
+            ["id" => 3, "name" => "Logo", "type" => "document", "order" => 3, "nonpaper" => true],
+            ["id" => 4, "name" => "Optics", "type" => "document", "order" => 4, "nonpaper" => true]
+        ]));
+
+        try {
+            $ol = $conf->options();
+
+            // paper namespace: by name, by ID, and by intrinsic name
+            xassert_eqq($ol->find("Calories")->id, 1);
+            xassert_eqq($ol->find("opt2")->id, 2);
+            xassert_eqq($ol->find("paper")->id, DTYPE_SUBMISSION);
+            xassert_eqq($ol->find("opt0")->id, DTYPE_SUBMISSION);
+            xassert_eqq($ol->find("final")->id, DTYPE_FINAL);
+            xassert_eqq(array_keys($ol->find_all("any")), [1, 2]);
+
+            // nonpaper options are invisible to the paper namespace, and vice versa
+            xassert_eqq($ol->find("Logo"), null);
+            xassert_eqq($ol->find("opt3"), null);
+            xassert_eqq($ol->find_nonpaper("Calories"), null);
+            xassert_eqq($ol->find_nonpaper("opt2"), null);
+            xassert_eqq($ol->find_nonpaper("paper"), null);
+
+            // nonpaper namespace: by name, by ID, and names starting with `opt`
+            xassert_eqq($ol->find_nonpaper("Logo")->id, 3);
+            xassert_eqq($ol->find_nonpaper("opt3")->id, 3);
+            xassert_eqq($ol->find_nonpaper("Optics")->id, 4);
+            xassert_eqq($ol->find_nonpaper("opt4")->id, 4);
+            xassert_eqq(array_keys($ol->find_all_nonpaper("any")), [3, 4]);
+
+            // empty and `none` match nothing; `any` is not a unique match
+            foreach (["", "none", "any"] as $name) {
+                xassert_eqq($ol->find($name), null);
+                xassert_eqq($ol->find_nonpaper($name), null);
+            }
+            xassert_eqq($ol->find_all(""), []);
+            xassert_eqq($ol->find_all("none"), []);
+            xassert_eqq($ol->find_all_nonpaper(""), []);
+            xassert_eqq($ol->find_all_nonpaper("none"), []);
+        } finally {
+            if ($saved_options === null) {
+                $conf->save_refresh_setting("options", null);
+            } else {
+                $conf->save_refresh_setting("options", 1, $saved_options);
+            }
+        }
+    }
+
     function test_initial_underscore() {
         $am = new AbbreviationMatcher;
         $am->add_phrase("confused", 0);
@@ -383,24 +454,24 @@ class Abbreviation_Tester {
 
     function test_unknown_decision() {
         $dm = $this->conf->decision_set();
-        xassert_eqq($dm->matchexpr("unknown", true), [0]);
-        xassert_eqq($dm->matchexpr("unk", true), [0]);
-        xassert_eqq($dm->matchexpr("und", true), [0]);
-        xassert_eqq($dm->matchexpr("undecided", true), [0]);
-        xassert_eqq($dm->matchexpr("?", true), [0]);
-        xassert_eqq($dm->matchexpr("any", true), [1, -1]);
-        xassert_eqq($dm->matchexpr("yes", true), [1]);
-        xassert_eqq($dm->matchexpr("no", true), [-1]);
+        xassert_eqq($dm->match("unknown"), [0]);
+        xassert_eqq($dm->match("unk"), [0]);
+        xassert_eqq($dm->match("und"), [0]);
+        xassert_eqq($dm->match("undecided"), [0]);
+        xassert_eqq($dm->match("?"), [0]);
+        xassert_eqq($dm->match("any"), [1, -1]);
+        xassert_eqq($dm->match("yes"), [1]);
+        xassert_eqq($dm->match("no"), [-1]);
     }
 
     function test_japanese() {
         $dm = new DecisionSet($this->conf, [1 => "採択-10分枠", 2 => "採択-15分枠", 3 => "採択-20分枠", 4 => "採択-30分枠", -1 => "不採択"]);
-        xassert_eqq($dm->matchexpr("採択", true), [1, 2, 3, 4]);
-        xassert_eqq($dm->matchexpr("採択-10分枠", true), [1]);
-        xassert_eqq($dm->matchexpr("採択-15分枠", true), [2]);
-        xassert_eqq($dm->matchexpr("採択-20分枠", true), [3]);
-        xassert_eqq($dm->matchexpr("採択-30分枠", true), [4]);
-        xassert_eqq($dm->matchexpr("不採択", true), [-1]);
-        xassert_eqq($dm->matchexpr("不採", true), [-1]);
+        xassert_eqq($dm->match("採択"), [1, 2, 3, 4]);
+        xassert_eqq($dm->match("採択-10分枠"), [1]);
+        xassert_eqq($dm->match("採択-15分枠"), [2]);
+        xassert_eqq($dm->match("採択-20分枠"), [3]);
+        xassert_eqq($dm->match("採択-30分枠"), [4]);
+        xassert_eqq($dm->match("不採択"), [-1]);
+        xassert_eqq($dm->match("不採"), [-1]);
     }
 }
