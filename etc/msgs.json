@@ -18,8 +18,9 @@
         ]
     },
     {
-        "in": "<5>The average committee member has submitted {n:.1f} reviews with {scores:list}.",
+        "in": "<5>The average PC member has submitted {n:.1f} reviews with {scores:list}.",
         "m": [
+            ["<5>The average committee member has submitted {n:.1f} reviews with {scores:list}."],
             ["<5>The average committee member has submitted {n:.1f} reviews.", ["!#{scores}"]],
             ["<5>The average committee member has submitted {n:.1f} review with {scores:list}.", ["{n}=1"]],
             ["<5>The average committee member has submitted {n:.1f} review.", ["{n}=1", "!#{scores}"]]
